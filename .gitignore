@@ -1,0 +1,10 @@
+*.db
+*.db-shm
+*.db-wal
+uploads/
+.env
+.env.*
+!.env.example
+.DS_Store
+/newsblog
+/kkapi

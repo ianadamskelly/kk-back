@@ -1,0 +1,278 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"kuzakizazi/internal/config"
+	"kuzakizazi/internal/store"
+)
+
+// API holds shared dependencies for HTTP handlers.
+type API struct {
+	cfg    config.Config
+	store  *store.Store
+	mailer Mailer
+}
+
+// NewRouter builds the full HTTP handler tree.
+func NewRouter(cfg config.Config, st *store.Store) http.Handler {
+	a := &API{
+		cfg:    cfg,
+		store:  st,
+		mailer: NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom, cfg.SMTPTLS),
+	}
+
+	r := chi.NewRouter()
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(corsMiddleware(cfg.CORSOrigin))
+
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/health", a.health)
+
+		// --- Public endpoints ---
+		r.Get("/posts", a.listPublicPosts)
+		r.Get("/posts/{slug}", a.getPublicPost)
+		r.Get("/posts/{slug}/comments", a.listComments)
+		r.Post("/posts/{slug}/comments", a.createComment)
+		r.Get("/categories", a.listCategories)
+
+		r.Get("/services", a.listPublicServices)
+		r.Get("/services/{slug}", a.getPublicService)
+		r.Get("/projects", a.listPublicProjects)
+		r.Get("/projects/{slug}", a.getPublicProject)
+		r.Get("/team", a.listTeam)
+		r.Get("/testimonials", a.listPublicTestimonials)
+		r.Get("/stats", a.listStats)
+		r.Get("/settings", a.getSettings)
+
+		r.Get("/products", a.listPublicProducts)
+		r.Get("/products/{slug}", a.getPublicProduct)
+
+		r.Get("/courses", a.listPublicCourses)
+		r.Get("/courses/{slug}", a.getPublicCourse)
+		r.Get("/library", a.listPublicLibrary)
+
+		r.Post("/contact", a.createSubmission)
+		r.Post("/newsletter", a.subscribeNewsletter)
+		r.Get("/unsubscribe/{token}", a.getUnsubscribePublic)
+		r.Post("/unsubscribe/{token}", a.acceptUnsubscribePublic)
+		r.Post("/orders", a.createOrder)
+		r.Post("/coupons/validate", a.validateCoupon)
+
+		// Payments (Flutterwave).
+		r.Post("/orders/{id}/pay", a.initiatePayment)
+		r.Get("/payments/verify", a.verifyPayment)
+		r.Post("/webhooks/flutterwave", a.flutterwaveWebhook)
+
+		// --- Authentication ---
+		r.Post("/admin/login", a.login) // legacy alias used by the admin app
+		r.Post("/auth/login", a.login)
+		r.Post("/auth/register", a.register)
+
+		// --- Account endpoints (any signed-in user) ---
+		r.Group(func(r chi.Router) {
+			r.Use(a.requireAuth)
+			r.Get("/auth/me", a.me)
+			r.Get("/account/orders", a.listAccountOrders)
+			r.Get("/memberships/me", a.getMyMembership)
+			r.Post("/memberships/checkout", a.createMembershipCheckout)
+			r.Post("/courses/{id}/checkout", a.createCourseCheckout)
+			r.Get("/account/credit", a.getMyCredit)
+			r.Get("/account/referrals", a.getMyReferrals)
+
+			// Dashboard + profile.
+			r.Get("/account/dashboard", a.getMyDashboard)
+			r.Get("/account/profile", a.getMyProfile)
+			r.Put("/account/profile", a.updateMyProfile)
+			r.Post("/account/password", a.changeMyPassword)
+
+			// Owned content.
+			r.Get("/account/courses", a.listMyCourses)
+			r.Get("/account/downloads", a.listMyDownloads)
+
+			// Customer testimonials.
+			r.Get("/account/testimonials", a.listMyTestimonials)
+			r.Post("/account/testimonials", a.createMyTestimonial)
+
+			// Tickets (the "Complaints" tab).
+			r.Get("/account/tickets", a.listMyTickets)
+			r.Post("/account/tickets", a.createMyTicket)
+			r.Get("/account/tickets/{id}", a.getMyTicket)
+			r.Post("/account/tickets/{id}/messages", a.replyToMyTicket)
+			r.Post("/account/tickets/{id}/close", a.closeMyTicket)
+		})
+
+		// --- Public invite endpoints (no auth) ---
+		r.Get("/invitations/{token}", a.getInvitationPublic)
+		r.Post("/invitations/{token}/accept", a.acceptInvitation)
+
+		// --- Admin endpoints (JWT + role with at least one permission) ---
+		r.Group(func(r chi.Router) {
+			r.Use(a.requireAuth)
+			r.Use(a.loadPermissions)
+			r.Use(a.requireAnyPermission(store.AllPermissionKeys()...))
+
+			// Identity + shared utilities (any staff user).
+			r.Get("/admin/me", a.me)
+			r.Post("/admin/upload", a.uploadImage)
+			r.Get("/admin/permissions", a.listPermissions)
+
+			// Posts.
+			r.With(a.requirePermission("posts.view")).Get("/admin/posts", a.listAdminPosts)
+			r.With(a.requirePermission("posts.view")).Get("/admin/posts/{id}", a.getAdminPost)
+			r.With(a.requirePermission("posts.manage")).Post("/admin/posts", a.createPost)
+			r.With(a.requirePermission("posts.manage")).Put("/admin/posts/{id}", a.updatePost)
+			r.With(a.requirePermission("posts.manage")).Delete("/admin/posts/{id}", a.deletePost)
+
+			// Categories.
+			r.With(a.requirePermission("categories.manage")).Post("/admin/categories", a.createCategory)
+			r.With(a.requirePermission("categories.manage")).Delete("/admin/categories/{id}", a.deleteCategory)
+
+			// Comments.
+			r.With(a.requirePermission("comments.view")).Get("/admin/comments", a.listAdminComments)
+			r.With(a.requirePermission("comments.manage")).Delete("/admin/comments/{id}", a.deleteComment)
+
+			// Services.
+			r.With(a.requirePermission("services.view")).Get("/admin/services", a.listAdminServices)
+			r.With(a.requirePermission("services.view")).Get("/admin/services/{id}", a.getAdminService)
+			r.With(a.requirePermission("services.manage")).Post("/admin/services", a.createService)
+			r.With(a.requirePermission("services.manage")).Put("/admin/services/{id}", a.updateService)
+			r.With(a.requirePermission("services.manage")).Delete("/admin/services/{id}", a.deleteService)
+
+			// Projects.
+			r.With(a.requirePermission("projects.view")).Get("/admin/projects", a.listAdminProjects)
+			r.With(a.requirePermission("projects.view")).Get("/admin/projects/{id}", a.getAdminProject)
+			r.With(a.requirePermission("projects.manage")).Post("/admin/projects", a.createProject)
+			r.With(a.requirePermission("projects.manage")).Put("/admin/projects/{id}", a.updateProject)
+			r.With(a.requirePermission("projects.manage")).Delete("/admin/projects/{id}", a.deleteProject)
+
+			// Team.
+			r.With(a.requirePermission("team.view")).Get("/admin/team", a.listAdminTeam)
+			r.With(a.requirePermission("team.view")).Get("/admin/team/{id}", a.getAdminTeamMember)
+			r.With(a.requirePermission("team.manage")).Post("/admin/team", a.createTeamMember)
+			r.With(a.requirePermission("team.manage")).Put("/admin/team/{id}", a.updateTeamMember)
+			r.With(a.requirePermission("team.manage")).Delete("/admin/team/{id}", a.deleteTeamMember)
+
+			// Testimonials.
+			r.With(a.requirePermission("testimonials.view")).Get("/admin/testimonials", a.listAdminTestimonials)
+			r.With(a.requirePermission("testimonials.view")).Get("/admin/testimonials/{id}", a.getAdminTestimonial)
+			r.With(a.requirePermission("testimonials.manage")).Post("/admin/testimonials", a.createTestimonial)
+			r.With(a.requirePermission("testimonials.manage")).Put("/admin/testimonials/{id}", a.updateTestimonial)
+			r.With(a.requirePermission("testimonials.manage")).Delete("/admin/testimonials/{id}", a.deleteTestimonial)
+
+			// Stats.
+			r.With(a.requirePermission("stats.view")).Get("/admin/stats", a.listAdminStats)
+			r.With(a.requirePermission("stats.manage")).Post("/admin/stats", a.createStat)
+			r.With(a.requirePermission("stats.manage")).Put("/admin/stats/{id}", a.updateStat)
+			r.With(a.requirePermission("stats.manage")).Delete("/admin/stats/{id}", a.deleteStat)
+
+			// Settings.
+			r.With(a.requirePermission("settings.view")).Get("/admin/settings", a.getSettings)
+			r.With(a.requirePermission("settings.manage")).Put("/admin/settings", a.updateSettings)
+
+			// Submissions.
+			r.With(a.requirePermission("submissions.view")).Get("/admin/submissions", a.listSubmissions)
+			r.With(a.requirePermission("submissions.manage")).Put("/admin/submissions/{id}", a.updateSubmission)
+			r.With(a.requirePermission("submissions.manage")).Delete("/admin/submissions/{id}", a.deleteSubmission)
+
+			// Subscribers.
+			r.With(a.requirePermission("subscribers.view")).Get("/admin/subscribers", a.listSubscribers)
+			r.With(a.requirePermission("subscribers.manage")).Delete("/admin/subscribers/{id}", a.deleteSubscriber)
+
+			// Products.
+			r.With(a.requirePermission("products.view")).Get("/admin/products", a.listAdminProducts)
+			r.With(a.requirePermission("products.view")).Get("/admin/products/{id}", a.getAdminProduct)
+			r.With(a.requirePermission("products.manage")).Post("/admin/products", a.createProduct)
+			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}", a.updateProduct)
+			r.With(a.requirePermission("products.manage")).Delete("/admin/products/{id}", a.deleteProduct)
+
+			// Orders.
+			r.With(a.requirePermission("orders.view")).Get("/admin/orders", a.listOrders)
+			r.With(a.requirePermission("orders.view")).Get("/admin/orders/{id}", a.getOrder)
+			r.With(a.requirePermission("orders.manage")).Put("/admin/orders/{id}", a.updateOrder)
+			r.With(a.requirePermission("orders.manage")).Delete("/admin/orders/{id}", a.deleteOrder)
+
+			// Courses + lessons.
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses", a.listAdminCourses)
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}", a.getAdminCourse)
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/lessons", a.listCourseLessons)
+			r.With(a.requirePermission("courses.view")).Get("/admin/lessons/{id}", a.getLesson)
+			r.With(a.requirePermission("courses.manage")).Post("/admin/courses", a.createCourse)
+			r.With(a.requirePermission("courses.manage")).Put("/admin/courses/{id}", a.updateCourse)
+			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}", a.deleteCourse)
+			r.With(a.requirePermission("courses.manage")).Post("/admin/courses/{id}/lessons", a.createLesson)
+			r.With(a.requirePermission("courses.manage")).Put("/admin/courses/{id}/lessons/reorder", a.reorderLessons)
+			r.With(a.requirePermission("courses.manage")).Put("/admin/lessons/{id}", a.updateLesson)
+			r.With(a.requirePermission("courses.manage")).Delete("/admin/lessons/{id}", a.deleteLesson)
+
+			// Library.
+			r.With(a.requirePermission("library.view")).Get("/admin/library", a.listAdminLibrary)
+			r.With(a.requirePermission("library.view")).Get("/admin/library/{id}", a.getAdminLibraryResource)
+			r.With(a.requirePermission("library.manage")).Post("/admin/library", a.createLibraryResource)
+			r.With(a.requirePermission("library.manage")).Put("/admin/library/{id}", a.updateLibraryResource)
+			r.With(a.requirePermission("library.manage")).Delete("/admin/library/{id}", a.deleteLibraryResource)
+
+			// Revenue + service income + memberships.
+			r.With(a.requireAnyPermission("orders.view", "service_revenue.view", "memberships.view")).Get("/admin/revenue", a.adminRevenueSummary)
+			r.With(a.requirePermission("memberships.view")).Get("/admin/memberships", a.listAdminMemberships)
+			r.With(a.requirePermission("service_revenue.view")).Get("/admin/service-revenue", a.listAdminServiceRevenue)
+			r.With(a.requirePermission("service_revenue.manage")).Post("/admin/service-revenue", a.createAdminServiceRevenue)
+			r.With(a.requirePermission("service_revenue.manage")).Delete("/admin/service-revenue/{id}", a.deleteAdminServiceRevenue)
+
+			// Roles + permissions.
+			r.With(a.requirePermission("roles.view")).Get("/admin/roles", a.listAdminRoles)
+			r.With(a.requirePermission("roles.manage")).Post("/admin/roles", a.createAdminRole)
+			r.With(a.requirePermission("roles.view")).Get("/admin/roles/{id}", a.getAdminRole)
+			r.With(a.requirePermission("roles.manage")).Put("/admin/roles/{id}", a.updateAdminRole)
+			r.With(a.requirePermission("roles.manage")).Delete("/admin/roles/{id}", a.deleteAdminRole)
+
+			// Staff users.
+			r.With(a.requirePermission("users.view")).Get("/admin/users", a.listAdminUsers)
+			r.With(a.requirePermission("users.manage")).Put("/admin/users/{id}", a.updateAdminUser)
+			r.With(a.requirePermission("users.manage")).Delete("/admin/users/{id}", a.deleteAdminUser)
+
+			// Invitations.
+			r.With(a.requirePermission("users.view")).Get("/admin/invitations", a.listAdminInvitations)
+			r.With(a.requireAnyPermission("users.invite", "users.manage")).Post("/admin/invitations", a.createAdminInvitation)
+			r.With(a.requirePermission("users.manage")).Delete("/admin/invitations/{id}", a.deleteAdminInvitation)
+
+			// Coupons.
+			r.With(a.requirePermission("coupons.view")).Get("/admin/coupons", a.listAdminCoupons)
+			r.With(a.requirePermission("coupons.manage")).Post("/admin/coupons", a.createAdminCoupon)
+			r.With(a.requirePermission("coupons.manage")).Put("/admin/coupons/{id}", a.updateAdminCoupon)
+			r.With(a.requirePermission("coupons.manage")).Delete("/admin/coupons/{id}", a.deleteAdminCoupon)
+
+			// Rewards (referrals + credit overview).
+			r.With(a.requirePermission("rewards.view")).Get("/admin/rewards", a.adminRewardsOverview)
+
+			// Tickets (customer-raised "complaints").
+			r.With(a.requirePermission("tickets.view")).Get("/admin/tickets", a.listAdminTickets)
+			r.With(a.requirePermission("tickets.view")).Get("/admin/tickets/{id}", a.getAdminTicket)
+			r.With(a.requirePermission("tickets.manage")).Post("/admin/tickets/{id}/messages", a.replyToAdminTicket)
+			r.With(a.requirePermission("tickets.manage")).Put("/admin/tickets/{id}", a.updateAdminTicket)
+
+			// Newsletters.
+			r.With(a.requirePermission("newsletters.view")).Get("/admin/newsletters", a.listAdminNewsletters)
+			r.With(a.requirePermission("newsletters.view")).Get("/admin/newsletters/{id}", a.getAdminNewsletter)
+			r.With(a.requirePermission("newsletters.manage")).Post("/admin/newsletters", a.createAdminNewsletter)
+			r.With(a.requirePermission("newsletters.manage")).Put("/admin/newsletters/{id}", a.updateAdminNewsletter)
+			r.With(a.requirePermission("newsletters.manage")).Delete("/admin/newsletters/{id}", a.deleteAdminNewsletter)
+			r.With(a.requirePermission("newsletters.manage")).Post("/admin/newsletters/{id}/send", a.sendAdminNewsletter)
+			r.With(a.requirePermission("newsletters.view")).Get("/admin/subscribers/tag-stats", a.listSubscriberTagStats)
+		})
+	})
+
+	// Serve uploaded images.
+	uploads := http.FileServer(http.Dir(cfg.UploadDir))
+	r.Handle("/uploads/*", http.StripPrefix("/uploads/", uploads))
+
+	return r
+}
+
+func (a *API) health(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}

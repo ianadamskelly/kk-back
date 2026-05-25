@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+.env
+.env.*
+!.env.example
+uploads/
+kkapi
+newsblog
+*.db
+*.db-shm
+*.db-wal
+Dockerfile
+.dockerignore
