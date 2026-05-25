@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o /out/kkapi .
 
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata curl \
  && addgroup -S app && adduser -S app -G app
 WORKDIR /app
 COPY --from=builder /out/kkapi /app/kkapi
