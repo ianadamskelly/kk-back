@@ -111,6 +111,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.Post("/account/reviews", a.upsertOwnReview)
 			r.Delete("/account/reviews/{id}", a.deleteOwnReview)
 
+			// Course tasks (read tasks + submissions for one course,
+			// submit / re-submit a response).
+			r.Get("/account/courses/{slug}/tasks", a.listMyCourseTasks)
+			r.Post("/account/tasks/{taskId}/submit", a.submitCourseTask)
+
 			// Tickets (the "Complaints" tab).
 			r.Get("/account/tickets", a.listMyTickets)
 			r.Post("/account/tickets", a.createMyTicket)
@@ -251,6 +256,14 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/resources", a.listCourseResources)
 			r.With(a.requirePermission("courses.manage")).Post("/admin/courses/{id}/resources", a.addCourseResource)
 			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}/resources/{resourceId}", a.deleteCourseResource)
+
+			// Module-end tasks + the student submissions inbox.
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/tasks", a.listAdminCourseTasks)
+			r.With(a.requirePermission("courses.manage")).Post("/admin/courses/{id}/tasks", a.createCourseTask)
+			r.With(a.requirePermission("courses.manage")).Put("/admin/courses/{id}/tasks/{taskId}", a.updateCourseTask)
+			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}/tasks/{taskId}", a.deleteCourseTask)
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/submissions", a.listAdminCourseSubmissions)
+			r.With(a.requirePermission("courses.manage")).Put("/admin/submissions/{submissionId}/grade", a.gradeSubmission)
 
 			// Library.
 			r.With(a.requirePermission("library.view")).Get("/admin/library", a.listAdminLibrary)
