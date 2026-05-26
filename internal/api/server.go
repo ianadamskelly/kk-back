@@ -68,6 +68,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Get("/payments/verify", a.verifyPayment)
 		r.Post("/webhooks/flutterwave", a.flutterwaveWebhook)
 
+		// Signed downloads. The token in the URL is the only auth — it
+		// encodes (user, order, file) and is verified inside the handler.
+		// Lives outside the requireAuth group so the email link works
+		// even after the cookie/session expires.
+		r.Get("/downloads/{token}", a.downloadFile)
+
 		// --- Authentication ---
 		r.Post("/admin/login", a.login) // legacy alias used by the admin app
 		r.Post("/auth/login", a.login)

@@ -198,8 +198,9 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 
 // --- Downloads + owned courses ---
 
-// listMyDownloads returns the digital products the user has bought via
-// confirmed orders. Used to populate the "My Downloads" tab.
+// listMyDownloads returns the products the user has bought via
+// confirmed orders, augmented with signed download URLs for any
+// digital files attached. Used to populate the "My Downloads" tab.
 func (a *API) listMyDownloads(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	orders, err := a.store.ListUserOrders(r.Context(), uid)
@@ -207,12 +208,22 @@ func (a *API) listMyDownloads(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	type downloadFile struct {
+		DownloadID         int64  `json:"downloadId"`
+		URL                string `json:"url"`
+		Label              string `json:"label"`
+		SizeBytes          int64  `json:"sizeBytes"`
+		DownloadsUsed      int    `json:"downloadsUsed"`
+		MaxDownloads       *int   `json:"maxDownloads"`
+		DownloadsRemaining *int   `json:"downloadsRemaining"`
+	}
 	type download struct {
-		OrderID     int64     `json:"orderId"`
-		ProductID   *int64    `json:"productId"`
-		ProductName string    `json:"productName"`
-		Quantity    int       `json:"quantity"`
-		PurchasedAt time.Time `json:"purchasedAt"`
+		OrderID     int64          `json:"orderId"`
+		ProductID   *int64         `json:"productId"`
+		ProductName string         `json:"productName"`
+		Quantity    int            `json:"quantity"`
+		PurchasedAt time.Time      `json:"purchasedAt"`
+		Files       []downloadFile `json:"files"`
 	}
 	items := []download{}
 	for _, o := range orders {
@@ -224,9 +235,45 @@ func (a *API) listMyDownloads(w http.ResponseWriter, r *http.Request) {
 		if o.Kind != "shop" {
 			continue
 		}
+		// Resolve digital downloads for this order up front so we can
+		// merge them into per-product line items.
+		orderFiles, err := a.store.ListOrderDigitalDownloads(r.Context(), uid, o.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		byProduct := map[int64][]store.CustomerDownload{}
+		for _, f := range orderFiles {
+			byProduct[f.ProductID] = append(byProduct[f.ProductID], f)
+		}
 		for _, it := range o.Items {
 			if it.ProductID == nil {
 				continue
+			}
+			files := []downloadFile{}
+			for _, f := range byProduct[*it.ProductID] {
+				token, err := a.signDownloadToken(uid, o.ID, f.DownloadID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
+				var remaining *int
+				if f.MaxDownloads != nil {
+					r := *f.MaxDownloads - f.DownloadsUsed
+					if r < 0 {
+						r = 0
+					}
+					remaining = &r
+				}
+				files = append(files, downloadFile{
+					DownloadID:         f.DownloadID,
+					URL:                "/api/downloads/" + token,
+					Label:              f.Label,
+					SizeBytes:          f.SizeBytes,
+					DownloadsUsed:      f.DownloadsUsed,
+					MaxDownloads:       f.MaxDownloads,
+					DownloadsRemaining: remaining,
+				})
 			}
 			items = append(items, download{
 				OrderID:     o.ID,
@@ -234,6 +281,7 @@ func (a *API) listMyDownloads(w http.ResponseWriter, r *http.Request) {
 				ProductName: it.ProductName,
 				Quantity:    it.Quantity,
 				PurchasedAt: o.CreatedAt,
+				Files:       files,
 			})
 		}
 	}

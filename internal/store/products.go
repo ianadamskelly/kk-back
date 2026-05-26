@@ -388,6 +388,109 @@ func (s *Store) DeleteProductDownload(ctx context.Context, productID, downloadID
 	return nil
 }
 
+// CustomerDownload is one row returned to a buyer listing the digital
+// files they can fetch on an order they own.
+type CustomerDownload struct {
+	ProductID     int64  `json:"productId"`
+	ProductName   string `json:"productName"`
+	DownloadID    int64  `json:"downloadId"`
+	Label         string `json:"label"`
+	SizeBytes     int64  `json:"sizeBytes"`
+	DownloadsUsed int    `json:"downloadsUsed"`
+	MaxDownloads  *int   `json:"maxDownloads"` // nil = unlimited
+}
+
+// ListOrderDigitalDownloads returns every downloadable file the given
+// user can fetch on the given order, with current per-grant counts.
+// Returns empty when the order has no digital products or the user
+// doesn't own it.
+func (s *Store) ListOrderDigitalDownloads(ctx context.Context, userID, orderID int64) ([]CustomerDownload, error) {
+	return queryRows[CustomerDownload](ctx, s.pool, `
+		SELECT pd.product_id           AS product_id,
+		       p.name                   AS product_name,
+		       pd.id                    AS download_id,
+		       pd.label                 AS label,
+		       pd.size_bytes            AS size_bytes,
+		       COALESCE(g.download_count, 0) AS downloads_used,
+		       p.max_downloads          AS max_downloads
+		FROM order_items oi
+		JOIN products p           ON p.id = oi.product_id AND p.kind = 'digital'
+		JOIN product_downloads pd ON pd.product_id = p.id
+		JOIN orders o             ON o.id = oi.order_id
+		LEFT JOIN product_download_grants g
+		       ON g.user_id = $1 AND g.order_id = oi.order_id AND g.download_id = pd.id
+		WHERE o.id = $2
+		  AND o.user_id = $1
+		  AND o.status IN ('confirmed', 'fulfilled')
+		ORDER BY pd.product_id, pd.position, pd.id
+	`, userID, orderID)
+}
+
+// ConsumeDownload atomically validates that (userID, orderID, downloadID)
+// is a legitimate grant on a digital product the user has paid for, then
+// increments the counter and returns the underlying ProductDownload so
+// the API layer can stream the file. Returns ErrNotFound if the grant
+// doesn't exist, ErrDownloadLimit if the per-customer cap is exceeded.
+func (s *Store) ConsumeDownload(ctx context.Context, userID, orderID, downloadID int64) (*ProductDownload, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Resolve the underlying file row and the product's max_downloads
+	// in one go, gated on order ownership + paid status.
+	var d ProductDownload
+	var maxDownloads *int
+	err = tx.QueryRow(ctx, `
+		SELECT pd.id, pd.product_id, pd.url, pd.label, pd.size_bytes, pd.position, pd.created_at,
+		       p.max_downloads
+		FROM product_downloads pd
+		JOIN products p     ON p.id = pd.product_id AND p.kind = 'digital'
+		JOIN order_items oi ON oi.product_id = pd.product_id
+		JOIN orders o       ON o.id = oi.order_id
+		WHERE pd.id     = $1
+		  AND o.id      = $2
+		  AND o.user_id = $3
+		  AND o.status  IN ('confirmed', 'fulfilled')
+		LIMIT 1`,
+		downloadID, orderID, userID,
+	).Scan(&d.ID, &d.ProductID, &d.URL, &d.Label, &d.SizeBytes, &d.Position, &d.CreatedAt, &maxDownloads)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	// Atomically bump (or create) the grant row.
+	var newCount int
+	err = tx.QueryRow(ctx, `
+		INSERT INTO product_download_grants
+		    (user_id, order_id, download_id, download_count, first_downloaded_at, last_downloaded_at)
+		VALUES ($1, $2, $3, 1, now(), now())
+		ON CONFLICT (user_id, order_id, download_id)
+		DO UPDATE SET download_count    = product_download_grants.download_count + 1,
+		              last_downloaded_at = now()
+		RETURNING download_count`,
+		userID, orderID, downloadID,
+	).Scan(&newCount)
+	if err != nil {
+		return nil, err
+	}
+
+	if maxDownloads != nil && newCount > *maxDownloads {
+		// Rollback the increment by failing — the deferred tx.Rollback
+		// runs because we return before Commit.
+		return nil, ErrDownloadLimit
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // DeleteProductImage removes one image. If it was the cover, the next
 // image by position is promoted to cover (and the product's Image
 // column is updated). If no images remain, products.image is cleared.

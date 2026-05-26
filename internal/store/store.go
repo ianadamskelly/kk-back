@@ -18,6 +18,10 @@ var ErrNotFound = errors.New("not found")
 // ErrDuplicate is returned when a unique constraint is violated.
 var ErrDuplicate = errors.New("duplicate")
 
+// ErrDownloadLimit is returned when a customer has reached the
+// per-download max_downloads cap on a digital product purchase.
+var ErrDownloadLimit = errors.New("download limit reached")
+
 // Store wraps the PostgreSQL connection pool.
 type Store struct {
 	pool *pgxpool.Pool
