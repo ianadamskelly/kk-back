@@ -51,9 +51,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 
 		r.Get("/products", a.listPublicProducts)
 		r.Get("/products/{slug}", a.getPublicProduct)
+		r.Get("/products/{slug}/reviews", a.listPublicProductReviews)
 
 		r.Get("/courses", a.listPublicCourses)
 		r.Get("/courses/{slug}", a.getPublicCourse)
+		r.Get("/courses/{slug}/reviews", a.listPublicCourseReviews)
 		r.Get("/library", a.listPublicLibrary)
 
 		r.Post("/contact", a.createSubmission)
@@ -104,6 +106,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.Get("/account/testimonials", a.listMyTestimonials)
 			r.Post("/account/testimonials", a.createMyTestimonial)
 
+			// Reviews on products / courses (verified buyers only;
+			// the handler enforces the purchase / enrolment check).
+			r.Post("/account/reviews", a.upsertOwnReview)
+			r.Delete("/account/reviews/{id}", a.deleteOwnReview)
+
 			// Tickets (the "Complaints" tab).
 			r.Get("/account/tickets", a.listMyTickets)
 			r.Post("/account/tickets", a.createMyTicket)
@@ -145,6 +152,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// Comments.
 			r.With(a.requirePermission("comments.view")).Get("/admin/comments", a.listAdminComments)
 			r.With(a.requirePermission("comments.manage")).Delete("/admin/comments/{id}", a.deleteComment)
+
+			// Reviews moderation (gated on comments.* since reviews are
+			// the same shape of moderation work — keeps roles simple).
+			r.With(a.requirePermission("comments.view")).Get("/admin/reviews", a.listAdminReviews)
+			r.With(a.requirePermission("comments.manage")).Put("/admin/reviews/{id}/status", a.setAdminReviewStatus)
+			r.With(a.requirePermission("comments.manage")).Delete("/admin/reviews/{id}", a.deleteAdminReview)
 
 			// Services.
 			r.With(a.requirePermission("services.view")).Get("/admin/services", a.listAdminServices)
