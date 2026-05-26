@@ -77,11 +77,13 @@ func (a *API) uploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// nativewebp produces lossless VP8L WebP. DefaultCompression balances
-	// CPU and size; bump to BestCompression if file size matters more than
-	// admin upload latency.
+	// nativewebp produces lossless VP8L WebP. BestSpeed keeps admin
+	// uploads snappy (DefaultCompression was ~30s on a small VPS for a
+	// modest image); the file-size penalty is acceptable for display-sized
+	// uploads. Bump to DefaultCompression or BestCompression if size
+	// matters more than upload latency.
 	if err := nativewebp.Encode(dst, img, &nativewebp.Options{
-		CompressionLevel: nativewebp.DefaultCompression,
+		CompressionLevel: nativewebp.BestSpeed,
 	}); err != nil {
 		// Close + clean up so a half-written file doesn't linger on disk.
 		_ = dst.Close()
