@@ -11,15 +11,17 @@ import (
 )
 
 type productInput struct {
-	Name        string `json:"name"`
-	Slug        string `json:"slug"`
-	Description string `json:"description"`
-	Body        string `json:"body"`
-	PriceCents  int64  `json:"priceCents"`
-	Image       string `json:"image"`
-	Category    string `json:"category"`
-	Status      string `json:"status"`
-	SortOrder   int    `json:"sortOrder"`
+	Name         string `json:"name"`
+	Slug         string `json:"slug"`
+	Description  string `json:"description"`
+	Body         string `json:"body"`
+	PriceCents   int64  `json:"priceCents"`
+	Image        string `json:"image"`
+	Category     string `json:"category"`
+	Status       string `json:"status"`
+	SortOrder    int    `json:"sortOrder"`
+	Kind         string `json:"kind"`
+	MaxDownloads *int   `json:"maxDownloads"`
 }
 
 func (a *API) listPublicProducts(w http.ResponseWriter, r *http.Request) {
@@ -93,10 +95,15 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	kind := in.Kind
+	if kind != "digital" {
+		kind = "physical"
+	}
 	item := &store.Product{
 		Name: in.Name, Slug: in.Slug, Description: in.Description, Body: in.Body,
 		PriceCents: in.PriceCents, Image: in.Image, Category: in.Category,
 		Status: in.Status, SortOrder: in.SortOrder,
+		Kind: kind, MaxDownloads: in.MaxDownloads,
 	}
 	if err := a.store.CreateProduct(r.Context(), item); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -133,6 +140,12 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 	existing.Category = in.Category
 	existing.Status = in.Status
 	existing.SortOrder = in.SortOrder
+	if in.Kind == "digital" {
+		existing.Kind = "digital"
+	} else {
+		existing.Kind = "physical"
+	}
+	existing.MaxDownloads = in.MaxDownloads
 	if err := a.store.UpdateProduct(r.Context(), existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -234,6 +247,87 @@ func (a *API) deleteProductImage(w http.ResponseWriter, r *http.Request) {
 	if err := a.store.DeleteProductImage(r.Context(), productID, imageID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "image not found for this product")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Digital downloads (admin-only) ---
+// The URLs returned here are raw upload paths and must never be exposed
+// on a public endpoint. Customer access flows through signed download
+// tokens (see /api/downloads in a later phase).
+
+func (a *API) listProductDownloads(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	items, err := a.store.ListProductDownloads(r.Context(), productID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (a *API) addProductDownload(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	if _, err := a.store.GetProductByID(r.Context(), productID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "product not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var in struct {
+		URL       string `json:"url"`
+		Label     string `json:"label"`
+		SizeBytes int64  `json:"sizeBytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.URL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	d := &store.ProductDownload{
+		ProductID: productID,
+		URL:       in.URL,
+		Label:     in.Label,
+		SizeBytes: in.SizeBytes,
+	}
+	if err := a.store.AddProductDownload(r.Context(), d); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, d)
+}
+
+func (a *API) reorderProductDownloads(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := a.store.SetProductDownloadOrder(r.Context(), productID, in.IDs); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "one of the files does not belong to this product")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteProductDownload(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	downloadID := parseID(chi.URLParam(r, "downloadId"))
+	if err := a.store.DeleteProductDownload(r.Context(), productID, downloadID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "file not found for this product")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())

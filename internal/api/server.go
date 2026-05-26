@@ -119,6 +119,10 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// Identity + shared utilities (any staff user).
 			r.Get("/admin/me", a.me)
 			r.Post("/admin/upload", a.uploadImage)
+			// Arbitrary non-image uploads (digital downloads, library
+			// files, etc.). Image uploads keep using /admin/upload so
+			// they're re-encoded as WebP.
+			r.Post("/admin/upload-file", a.uploadFile)
 			r.Get("/admin/permissions", a.listPermissions)
 
 			// Posts.
@@ -196,6 +200,13 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}/images/order", a.reorderProductImages)
 			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}/images/{imageId}/cover", a.setProductCoverImage)
 			r.With(a.requirePermission("products.manage")).Delete("/admin/products/{id}/images/{imageId}", a.deleteProductImage)
+			// Digital downloads: attach files (uploaded via
+			// /admin/upload-file) to a product. Never exposed publicly;
+			// customer access flows through signed tokens.
+			r.With(a.requirePermission("products.view")).Get("/admin/products/{id}/downloads", a.listProductDownloads)
+			r.With(a.requirePermission("products.manage")).Post("/admin/products/{id}/downloads", a.addProductDownload)
+			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}/downloads/order", a.reorderProductDownloads)
+			r.With(a.requirePermission("products.manage")).Delete("/admin/products/{id}/downloads/{downloadId}", a.deleteProductDownload)
 
 			// Orders.
 			r.With(a.requirePermission("orders.view")).Get("/admin/orders", a.listOrders)
