@@ -14,6 +14,11 @@ type Config struct {
 	SeedAdminEmail    string
 	SeedAdminPassword string
 	UploadDir         string
+	// ProtectedUploadDir holds files that should NEVER be served by
+	// the public file handler — digital download payloads, member
+	// library files, course task attachments. Access is gated by
+	// signed tokens minted by /api/files/{token}.
+	ProtectedUploadDir string
 	CORSOrigin        string
 
 	PublicBaseURL   string // frontend, e.g. https://kuzakizazi.com
@@ -51,6 +56,7 @@ func Load() Config {
 		SeedAdminEmail:    env("SEED_ADMIN_EMAIL", "admin@kuzakizazi.com"),
 		SeedAdminPassword: env("SEED_ADMIN_PASSWORD", "admin123"),
 		UploadDir:         env("UPLOAD_DIR", "uploads"),
+		ProtectedUploadDir: env("PROTECTED_UPLOAD_DIR", "uploads/protected"),
 		CORSOrigin:        env("CORS_ORIGIN", "http://localhost:3000"),
 
 		PublicBaseURL:   env("PUBLIC_BASE_URL", "http://localhost:3000"),

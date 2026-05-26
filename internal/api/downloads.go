@@ -83,15 +83,28 @@ func (a *API) downloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// d.URL is the upload path, e.g. "/uploads/20260526-123456-abcd.pdf".
-	// Resolve to a filesystem path under cfg.UploadDir.
-	rel := strings.TrimPrefix(d.URL, "/uploads/")
-	// Defence in depth: refuse any path that escapes the uploads dir.
+	// d.URL is the stored upload path. New uploads land under
+	// ProtectedUploadDir and carry the "/files/" prefix; legacy
+	// uploads predating the protected dir live under UploadDir with
+	// the "/uploads/" prefix. Resolve both forms.
+	var rel, baseDir string
+	switch {
+	case strings.HasPrefix(d.URL, "/files/"):
+		rel = strings.TrimPrefix(d.URL, "/files/")
+		baseDir = a.cfg.ProtectedUploadDir
+	case strings.HasPrefix(d.URL, "/uploads/"):
+		rel = strings.TrimPrefix(d.URL, "/uploads/")
+		baseDir = a.cfg.UploadDir
+	default:
+		writeError(w, http.StatusBadRequest, "unknown file path scheme")
+		return
+	}
+	// Defence in depth: refuse any path that escapes the base dir.
 	if strings.Contains(rel, "..") || strings.ContainsAny(rel, "\x00") || rel == "" {
 		writeError(w, http.StatusBadRequest, "invalid download path")
 		return
 	}
-	fullPath := filepath.Join(a.cfg.UploadDir, rel)
+	fullPath := filepath.Join(baseDir, rel)
 
 	f, err := os.Open(fullPath)
 	if err != nil {

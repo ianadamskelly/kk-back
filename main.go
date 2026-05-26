@@ -20,6 +20,9 @@ func main() {
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
 		log.Fatalf("could not create upload dir: %v", err)
 	}
+	if err := os.MkdirAll(cfg.ProtectedUploadDir, 0o755); err != nil {
+		log.Fatalf("could not create protected upload dir: %v", err)
+	}
 
 	ctx := context.Background()
 	st, err := store.New(ctx, cfg.DatabaseURL)

@@ -124,9 +124,21 @@ func (a *API) uploadImage(w http.ResponseWriter, r *http.Request) {
 
 // uploadFile accepts arbitrary file types for digital downloads,
 // library files, and similar non-image payloads. The bytes are stored
-// verbatim — unlike uploadImage we don't decode or re-encode. Returns
-// the public URL, the original filename, and the size in bytes.
+// verbatim under ProtectedUploadDir (NOT the public uploads dir) so
+// the raw URL doesn't grant unauthenticated access. Returns the
+// internal `/files/<name>` URL — clients see this only as the
+// stored value; the read path goes through /api/files/{token}.
 func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
+	a.uploadFileTo(w, r, a.cfg.ProtectedUploadDir, "/files/")
+}
+
+// uploadFileTo is the shared implementation of the two upload-file
+// endpoints (admin uploads + customer uploads for course task
+// attachments). dir is the disk directory to write into; urlPrefix is
+// the leading path inserted into the returned URL. Both endpoints use
+// the same protected dir today — keeping the function generic lets us
+// branch later if needed.
+func (a *API) uploadFileTo(w http.ResponseWriter, r *http.Request, dir, urlPrefix string) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxDownloadFileBytes)
 	if err := r.ParseMultipartForm(maxDownloadFileBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "file too large or invalid form (max 100 MB)")
@@ -151,7 +163,7 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(buf) + ext
-	path := filepath.Join(a.cfg.UploadDir, name)
+	path := filepath.Join(dir, name)
 
 	dst, err := os.Create(path)
 	if err != nil {
@@ -170,9 +182,27 @@ func (a *API) uploadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not finalise file: "+err.Error())
 		return
 	}
+	storedURL := urlPrefix + name
+	// For protected uploads, also hand back a signed view URL so the
+	// uploader can preview their file immediately. Public images
+	// (urlPrefix "/uploads/") get the same URL twice — the static
+	// file handler serves them without any token.
+	viewURL := storedURL
+	if urlPrefix == "/files/" {
+		viewURL = a.signedFileURL(currentUserID(r), storedURL)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"url":       "/uploads/" + name,
+		"url":       storedURL,
+		"viewUrl":   viewURL,
 		"filename":  header.Filename,
 		"sizeBytes": n,
 	})
+}
+
+// uploadAccountFile is the customer-side counterpart to uploadFile.
+// Same destination (ProtectedUploadDir) and same returned shape —
+// students need it to attach files to course-task submissions, and
+// any reader is gated by /api/files/{token} just like admin uploads.
+func (a *API) uploadAccountFile(w http.ResponseWriter, r *http.Request) {
+	a.uploadFileTo(w, r, a.cfg.ProtectedUploadDir, "/files/")
 }

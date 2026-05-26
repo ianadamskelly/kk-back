@@ -100,8 +100,10 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		kind = "physical"
 	}
 	item := &store.Product{
-		Name: in.Name, Slug: in.Slug, Description: in.Description, Body: in.Body,
-		PriceCents: in.PriceCents, Image: in.Image, Category: in.Category,
+		Name: in.Name, Slug: in.Slug,
+		Description: sanitizeHTML(in.Description),
+		Body:        sanitizeHTML(in.Body),
+		PriceCents:  in.PriceCents, Image: in.Image, Category: in.Category,
 		Status: in.Status, SortOrder: in.SortOrder,
 		Kind: kind, MaxDownloads: in.MaxDownloads,
 	}
@@ -133,8 +135,8 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.Name = in.Name
 	existing.Slug = in.Slug
-	existing.Description = in.Description
-	existing.Body = in.Body
+	existing.Description = sanitizeHTML(in.Description)
+	existing.Body = sanitizeHTML(in.Body)
 	existing.PriceCents = in.PriceCents
 	existing.Image = in.Image
 	existing.Category = in.Category

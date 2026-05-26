@@ -99,7 +99,11 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.recordOrderDiscounts(r.Context(), order, uid)
+	// NOTE: recordOrderDiscounts is intentionally NOT called here.
+	// Coupons and store credit are now consumed only after payment
+	// is verified (see payments.go) or an admin marks the order
+	// confirmed (see updateOrder). Otherwise a customer could drain
+	// credit + burn single-use coupons by spamming pending orders.
 
 	// Fire-and-forget "order received" email — SMTP errors are logged
 	// but never block placement.
@@ -192,10 +196,13 @@ func (a *API) updateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// An admin marking an order confirmed should fire the same entitlement
-	// + referral-reward side-effects as a gateway verify. This makes
-	// off-gateway payments (bank transfer, manual reconciliation) work end-to-end.
+	// + referral-reward side-effects as a gateway verify, and consume any
+	// coupon redemption / credit debit that was reserved at order create.
+	// This makes off-gateway payments (bank transfer, manual reconciliation)
+	// work end-to-end.
 	if in.Status == "confirmed" {
 		a.applyEntitlements(r, id)
+		a.consumeOrderDiscounts(r.Context(), id)
 	}
 	// When the admin marks an order fulfilled, send the buyer the
 	// "your order is ready" email — with download links for any

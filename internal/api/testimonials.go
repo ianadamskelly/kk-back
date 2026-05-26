@@ -62,7 +62,8 @@ func (a *API) createTestimonial(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := &store.Testimonial{
-		Author: in.Author, Role: in.Role, Company: in.Company, Quote: in.Quote,
+		Author: in.Author, Role: in.Role, Company: in.Company,
+		Quote:  sanitizeHTML(in.Quote),
 		Avatar: in.Avatar, SortOrder: in.SortOrder, Status: in.Status,
 	}
 	if err := a.store.CreateTestimonial(r.Context(), item); err != nil {
@@ -94,7 +95,7 @@ func (a *API) updateTestimonial(w http.ResponseWriter, r *http.Request) {
 	existing.Author = in.Author
 	existing.Role = in.Role
 	existing.Company = in.Company
-	existing.Quote = in.Quote
+	existing.Quote = sanitizeHTML(in.Quote)
 	existing.Avatar = in.Avatar
 	existing.SortOrder = in.SortOrder
 	existing.Status = in.Status

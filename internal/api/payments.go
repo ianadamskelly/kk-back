@@ -66,6 +66,16 @@ func (a *API) initiatePayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Ownership gate. The caller's authenticated user id must match
+	// the order's user id — without this, anyone could initiate
+	// payment for any order by guessing a sequential id and would get
+	// back the buyer's name / email / phone in the gateway payload.
+	uid := currentUserID(r)
+	if uid == 0 || order.UserID == nil || *order.UserID != uid {
+		writeError(w, http.StatusForbidden, "this order belongs to another account")
+		return
+	}
+
 	if last, err := a.store.GetLatestPaymentForOrder(r.Context(), order.ID); err == nil &&
 		last != nil && last.Status == "successful" {
 		writeError(w, http.StatusConflict, "order has already been paid")
@@ -288,6 +298,7 @@ func (a *API) applyFlutterwaveVerify(r *http.Request, payment *store.Payment) er
 		}
 		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
 		a.applyEntitlements(r, payment.OrderID)
+		a.consumeOrderDiscounts(r.Context(), payment.OrderID)
 		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
 	case resp.Data.Status == "failed" || resp.Data.Status == "cancelled":
 		payment.Status = resp.Data.Status
@@ -332,6 +343,7 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 		}
 		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
 		a.applyEntitlements(r, payment.OrderID)
+		a.consumeOrderDiscounts(r.Context(), payment.OrderID)
 		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
 	case "failure":
 		payment.Status = "failed"

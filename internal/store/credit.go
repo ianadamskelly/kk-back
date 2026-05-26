@@ -48,6 +48,22 @@ func (s *Store) AddCreditTransaction(ctx context.Context, tx *CreditTransaction)
 	).Scan(&tx.ID, &tx.CreatedAt)
 }
 
+// HasOrderSpend reports whether a credit "order_spend" row already
+// exists for the given order. Used by recordOrderDiscounts to stay
+// idempotent across the "gateway verified" and "admin marked
+// confirmed" paths. (The partial UNIQUE index in migration 0021 is
+// the hard backstop; this helper avoids the round-trip into Postgres
+// and a noisy 23505 in the application logs.)
+func (s *Store) HasOrderSpend(ctx context.Context, orderID int64) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+		    SELECT 1 FROM credit_transactions
+		    WHERE related_order_id = $1 AND reason = 'order_spend'
+		)`, orderID).Scan(&exists)
+	return exists, err
+}
+
 // RecentCreditTransactions returns the latest N entries across all users —
 // used by the admin /rewards page.
 func (s *Store) RecentCreditTransactions(ctx context.Context, limit int) ([]CreditTransaction, error) {

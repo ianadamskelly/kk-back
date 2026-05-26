@@ -70,7 +70,10 @@ func (a *API) createComment(w http.ResponseWriter, r *http.Request) {
 	comment := &store.Comment{
 		PostID:     post.ID,
 		AuthorName: in.AuthorName,
-		Body:       in.Body,
+		// Comments are submitted by the public — strict sanitisation
+		// is essential; otherwise a comment can drop a <script> that
+		// runs for everyone reading the post.
+		Body: sanitizeHTML(in.Body),
 	}
 	if err := a.store.CreateComment(r.Context(), comment); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -118,10 +118,21 @@ func (s *Store) RecordCouponRedemption(ctx context.Context, couponID int64, user
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `
+	// Idempotent on order_id — a partial UNIQUE index (migration
+	// 0021) enforces "at most one redemption per order". If the row
+	// already exists, skip the used_count bump too so re-running is
+	// safe. (Callers may invoke recordOrderDiscounts more than once
+	// across the gateway-verify and admin "mark confirmed" paths.)
+	tag, err := tx.Exec(ctx, `
 		INSERT INTO coupon_redemptions (coupon_id, user_id, order_id, amount_discounted_cents)
-		VALUES ($1,$2,$3,$4)`, couponID, userID, orderID, discountCents); err != nil {
+		VALUES ($1,$2,$3,$4)
+		ON CONFLICT (order_id) WHERE order_id IS NOT NULL DO NOTHING`,
+		couponID, userID, orderID, discountCents)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return tx.Commit(ctx)
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE coupons SET used_count = used_count + 1, updated_at = now() WHERE id = $1`,

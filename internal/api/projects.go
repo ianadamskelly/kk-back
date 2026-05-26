@@ -79,7 +79,7 @@ func (a *API) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	item := &store.Project{
 		Title: in.Title, Slug: in.Slug, Client: in.Client, Summary: in.Summary,
-		Body: in.Body, CoverImage: in.CoverImage, Results: in.Results,
+		Body: sanitizeHTML(in.Body), CoverImage: in.CoverImage, Results: in.Results,
 		Category: in.Category, SortOrder: in.SortOrder, Status: in.Status,
 	}
 	if err := a.store.CreateProject(r.Context(), item); err != nil {
@@ -112,7 +112,7 @@ func (a *API) updateProject(w http.ResponseWriter, r *http.Request) {
 	existing.Slug = in.Slug
 	existing.Client = in.Client
 	existing.Summary = in.Summary
-	existing.Body = in.Body
+	existing.Body = sanitizeHTML(in.Body)
 	existing.CoverImage = in.CoverImage
 	existing.Results = in.Results
 	existing.Category = in.Category

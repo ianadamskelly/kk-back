@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // CourseTask is an assignment shown at the end of a module.
@@ -167,6 +169,21 @@ func (s *Store) AdminListSubmissionsForCourse(ctx context.Context, courseID int6
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// CourseIDForTask returns the course id that owns the given task, or
+// ErrNotFound. Used by submitCourseTask to enforce enrollment.
+func (s *Store) CourseIDForTask(ctx context.Context, taskID int64) (int64, error) {
+	var courseID int64
+	err := s.pool.QueryRow(ctx,
+		`SELECT course_id FROM course_tasks WHERE id = $1`, taskID).Scan(&courseID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	return courseID, nil
 }
 
 // SubmissionContext returns (user_id, course_id) for a submission —

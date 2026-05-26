@@ -65,8 +65,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Post("/orders", a.createOrder)
 		r.Post("/coupons/validate", a.validateCoupon)
 
-		// Payments (Flutterwave).
-		r.Post("/orders/{id}/pay", a.initiatePayment)
+		// Payments. /payments/verify is hit by the gateway redirect
+		// without our session, and /webhooks/flutterwave is auth'd by
+		// signature — both stay public. /orders/{id}/pay moves into
+		// the authenticated block below; the handler also enforces
+		// order ownership.
 		r.Get("/payments/verify", a.verifyPayment)
 		r.Post("/webhooks/flutterwave", a.flutterwaveWebhook)
 
@@ -75,6 +78,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		// Lives outside the requireAuth group so the email link works
 		// even after the cookie/session expires.
 		r.Get("/downloads/{token}", a.downloadFile)
+
+		// Signed file fetcher. The token authorises one read of one
+		// protected file (library payload, course-task attachment).
+		// Public so <a href> / <img src> work without an Authorization
+		// header; the JWT inside the URL is the security boundary.
+		r.Get("/files/{token}", a.servePublicFileToken)
 
 		// Certificate verify + download — the code is the only auth.
 		// Verify is a small JSON for the share-friendly page; download
@@ -91,6 +100,10 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(a.requireAuth)
 			r.Get("/auth/me", a.me)
+			// Payment initiation requires auth + the handler verifies
+			// the caller owns the order. Was previously public, which
+			// let anyone enumerate orders by id and read customer PII.
+			r.Post("/orders/{id}/pay", a.initiatePayment)
 			r.Get("/account/orders", a.listAccountOrders)
 			r.Get("/memberships/me", a.getMyMembership)
 			r.Post("/memberships/checkout", a.createMembershipCheckout)
@@ -121,6 +134,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// submit / re-submit a response).
 			r.Get("/account/courses/{slug}/tasks", a.listMyCourseTasks)
 			r.Post("/account/tasks/{taskId}/submit", a.submitCourseTask)
+			// Student file upload for task attachments. Same backend as
+			// the admin uploader (writes to ProtectedUploadDir, returns
+			// "/files/<name>"); separate route so customers don't need
+			// admin permissions to hit it.
+			r.Post("/account/upload-file", a.uploadAccountFile)
 
 			// Certificates earned by the signed-in customer.
 			r.Get("/account/certificates", a.listMyCertificates)

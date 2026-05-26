@@ -136,7 +136,7 @@ func (a *API) upsertOwnReview(w http.ResponseWriter, r *http.Request) {
 		EntityType: in.EntityType,
 		EntityID:   in.EntityID,
 		Rating:     in.Rating,
-		Body:       strings.TrimSpace(in.Body),
+		Body:       sanitizeHTML(strings.TrimSpace(in.Body)),
 	}
 	if err := a.store.UpsertReview(r.Context(), review); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

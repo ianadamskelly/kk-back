@@ -51,7 +51,8 @@ Core:
 | `DATABASE_URL` | local default | Postgres connection string. |
 | `JWT_SECRET` | dev placeholder — **change in prod** | Signing secret for JWTs. Use a long random string. |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | dev defaults — **change in prod** | Admin user created on first boot. |
-| `UPLOAD_DIR` | `uploads` | Where uploads are written. Mount a persistent volume here in prod. |
+| `UPLOAD_DIR` | `uploads` | Where **public** uploads (cover images, public assets) are written. Served verbatim under `/uploads/*`. Mount a persistent volume here in prod. |
+| `PROTECTED_UPLOAD_DIR` | `uploads/protected` | Where **protected** uploads land (digital download payloads, member library files, course-task attachments). NOT served publicly — reads go through signed tokens at `/api/files/{token}` or `/api/downloads/{token}`. Default lives under `UploadDir` so one volume covers both. |
 | `CORS_ORIGIN` | `http://localhost:3000` | Allowed origin for the frontend. |
 | `PUBLIC_BASE_URL` | `http://localhost:3000` | Public **site** URL (frontend). Used in emails and payment redirects. |
 | `API_PUBLIC_URL` | `http://localhost:8080` | Public **API** URL (this backend). Used to render absolute download links in order emails. |

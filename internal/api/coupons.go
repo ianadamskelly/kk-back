@@ -121,14 +121,45 @@ func (a *API) applyDiscountsAndCredit(ctx context.Context, order *store.Order, u
 	return nil
 }
 
-// recordOrderDiscounts writes the bookkeeping rows for a successfully
-// persisted order — coupon redemption + a negative credit-ledger entry.
-// Errors are logged but not returned; the order is already committed.
+// consumeOrderDiscounts is the helper the payment-confirm paths call
+// once they know an order is actually paid. It loads the order so the
+// caller doesn't need to (the gateway-verify hooks only have an id)
+// and then defers to recordOrderDiscounts.
+func (a *API) consumeOrderDiscounts(ctx context.Context, orderID int64) {
+	order, err := a.store.GetOrder(ctx, orderID)
+	if err != nil || order == nil {
+		return
+	}
+	var uid *int64
+	if order.UserID != nil {
+		v := *order.UserID
+		uid = &v
+	}
+	a.recordOrderDiscounts(ctx, order, uid)
+}
+
+// recordOrderDiscounts writes the bookkeeping rows for an order that
+// just transitioned into "paid" — coupon redemption + a negative
+// credit-ledger entry.
+//
+// IMPORTANT: this is only called AFTER payment is confirmed, never at
+// order creation time. Earlier code called this from createOrder,
+// which let a customer drain their credit balance + burn single-use
+// coupons by spamming pending orders.
+//
+// The function is idempotent: RecordCouponRedemption upserts on
+// order_id, and the spend insert is gated on HasOrderSpend so a
+// replayed webhook / repeated admin action doesn't double-debit.
+// Errors are logged-only since the order is already considered paid.
 func (a *API) recordOrderDiscounts(ctx context.Context, order *store.Order, userID *int64) {
 	if order.CouponID != nil {
 		_ = a.store.RecordCouponRedemption(ctx, *order.CouponID, userID, order.ID, order.DiscountCents)
 	}
 	if order.CreditCents > 0 && userID != nil {
+		already, err := a.store.HasOrderSpend(ctx, order.ID)
+		if err != nil || already {
+			return
+		}
 		oid := order.ID
 		_ = a.store.AddCreditTransaction(ctx, &store.CreditTransaction{
 			UserID:         *userID,

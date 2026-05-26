@@ -75,7 +75,8 @@ func (a *API) createService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := &store.Service{
-		Title: in.Title, Slug: in.Slug, Summary: in.Summary, Body: in.Body,
+		Title: in.Title, Slug: in.Slug, Summary: in.Summary,
+		Body: sanitizeHTML(in.Body),
 		Icon: in.Icon, SortOrder: in.SortOrder, Status: in.Status,
 	}
 	if err := a.store.CreateService(r.Context(), item); err != nil {
@@ -107,7 +108,7 @@ func (a *API) updateService(w http.ResponseWriter, r *http.Request) {
 	existing.Title = in.Title
 	existing.Slug = in.Slug
 	existing.Summary = in.Summary
-	existing.Body = in.Body
+	existing.Body = sanitizeHTML(in.Body)
 	existing.Icon = in.Icon
 	existing.SortOrder = in.SortOrder
 	existing.Status = in.Status

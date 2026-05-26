@@ -41,6 +41,17 @@ func (a *API) listPublicLibrary(w http.ResponseWriter, r *http.Request) {
 		for i := range items {
 			items[i].URL = ""
 		}
+	} else {
+		// Tokenise protected-file URLs so the browser can fetch them
+		// through /api/files/{token} without an Authorization header.
+		// External URLs are passed through unchanged.
+		uid := int64(0)
+		if claims := a.optionalClaims(r); claims != nil {
+			uid = parseClaimsUserID(claims)
+		}
+		for i := range items {
+			items[i].URL = a.signedFileURL(uid, items[i].URL)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entitled":  entitled,
@@ -100,7 +111,7 @@ func (a *API) createLibraryResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := &store.LibraryResource{
-		Title: in.Title, Slug: in.Slug, Description: in.Description, Type: in.Type,
+		Title: in.Title, Slug: in.Slug, Description: sanitizeHTML(in.Description), Type: in.Type,
 		Category: in.Category, URL: in.URL, Image: in.Image, Status: in.Status,
 		SortOrder: in.SortOrder,
 	}
@@ -132,7 +143,7 @@ func (a *API) updateLibraryResource(w http.ResponseWriter, r *http.Request) {
 	}
 	existing.Title = in.Title
 	existing.Slug = in.Slug
-	existing.Description = in.Description
+	existing.Description = sanitizeHTML(in.Description)
 	existing.Type = in.Type
 	existing.Category = in.Category
 	existing.URL = in.URL

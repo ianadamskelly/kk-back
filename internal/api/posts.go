@@ -89,7 +89,7 @@ func (a *API) createPost(w http.ResponseWriter, r *http.Request) {
 	post := &store.Post{
 		Title:      in.Title,
 		Excerpt:    in.Excerpt,
-		Content:    in.Content,
+		Content:    sanitizeHTML(in.Content),
 		CoverImage: in.CoverImage,
 		Status:     in.Status,
 		CategoryID: in.CategoryID,
@@ -126,7 +126,7 @@ func (a *API) updatePost(w http.ResponseWriter, r *http.Request) {
 
 	existing.Title = in.Title
 	existing.Excerpt = in.Excerpt
-	existing.Content = in.Content
+	existing.Content = sanitizeHTML(in.Content)
 	existing.CoverImage = in.CoverImage
 	existing.Status = in.Status
 	existing.CategoryID = in.CategoryID

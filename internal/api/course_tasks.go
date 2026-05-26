@@ -101,6 +101,10 @@ func (a *API) listAdminCourseSubmissions(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	adminID := currentUserID(r)
+	for i := range items {
+		items[i].FileURL = a.signedFileURL(adminID, items[i].FileURL)
+	}
 	writeJSON(w, http.StatusOK, items)
 }
 
@@ -175,16 +179,50 @@ func (a *API) listMyCourseTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Replace raw /files/... fileUrls with signed /api/files/<token>
+	// URLs so the student's browser can fetch their attachment
+	// without an Authorization header.
+	for i := range subs {
+		subs[i].FileURL = a.signedFileURL(uid, subs[i].FileURL)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tasks":       tasks,
 		"submissions": subs,
 	})
 }
 
-// submitCourseTask creates or replaces the caller's response.
+// submitCourseTask creates or replaces the caller's response. The
+// caller must be enrolled in the course owning this task — without
+// that gate any signed-in user could post submissions to any task.
 func (a *API) submitCourseTask(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	taskID := parseID(chi.URLParam(r, "taskId"))
+
+	// Resolve the task's course id so we can verify enrollment. A
+	// generic per-task fetch isn't in the store yet — read it
+	// through the existing context helper that already joins task
+	// -> course via the submissions table. Since the submission
+	// may not exist yet, we instead query the task list for the
+	// task's course id directly.
+	courseID, err := a.store.CourseIDForTask(r.Context(), taskID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	enrolled, err := a.store.HasUserEnrolledInCourse(r.Context(), uid, courseID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !enrolled {
+		writeError(w, http.StatusForbidden, "not enrolled in this course")
+		return
+	}
+
 	var in struct {
 		Body    string `json:"body"`
 		FileURL string `json:"fileUrl"`

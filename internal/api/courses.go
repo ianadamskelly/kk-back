@@ -138,8 +138,9 @@ func (a *API) createCourse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	item := &store.Course{
-		Title: in.Title, Slug: in.Slug, Summary: in.Summary, Description: in.Description,
-		CoverImage: in.CoverImage, Level: in.Level, Duration: in.Duration,
+		Title: in.Title, Slug: in.Slug, Summary: in.Summary,
+		Description: sanitizeHTML(in.Description),
+		CoverImage:  in.CoverImage, Level: in.Level, Duration: in.Duration,
 		Instructor: in.Instructor, Category: in.Category, Language: in.Language,
 		PromoVideo: in.PromoVideo, Prerequisites: in.Prerequisites, Outcomes: in.Outcomes,
 		PriceCents: in.PriceCents, Status: in.Status, SortOrder: in.SortOrder,
@@ -173,7 +174,7 @@ func (a *API) updateCourse(w http.ResponseWriter, r *http.Request) {
 	existing.Title = in.Title
 	existing.Slug = in.Slug
 	existing.Summary = in.Summary
-	existing.Description = in.Description
+	existing.Description = sanitizeHTML(in.Description)
 	existing.CoverImage = in.CoverImage
 	existing.Level = in.Level
 	existing.Duration = in.Duration
@@ -234,7 +235,7 @@ func (a *API) createLesson(w http.ResponseWriter, r *http.Request) {
 	}
 	lesson := &store.Lesson{
 		CourseID: courseID, Module: in.Module, Slug: in.Slug, Title: in.Title,
-		Content: in.Content, VideoURL: in.VideoURL, Duration: in.Duration,
+		Content: sanitizeHTML(in.Content), VideoURL: in.VideoURL, Duration: in.Duration,
 		IsPreview: in.IsPreview, SortOrder: in.SortOrder,
 	}
 	if err := a.store.CreateLesson(r.Context(), lesson); err != nil {
@@ -279,7 +280,7 @@ func (a *API) updateLesson(w http.ResponseWriter, r *http.Request) {
 	existing.Module = in.Module
 	existing.Slug = in.Slug
 	existing.Title = in.Title
-	existing.Content = in.Content
+	existing.Content = sanitizeHTML(in.Content)
 	existing.VideoURL = in.VideoURL
 	existing.Duration = in.Duration
 	existing.IsPreview = in.IsPreview

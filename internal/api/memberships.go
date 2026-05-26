@@ -90,7 +90,8 @@ func (a *API) createMembershipCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.recordOrderDiscounts(r.Context(), order, &uid)
+	// Coupon + credit are consumed at payment-verify time, not here.
+	// See orders.go for the rationale.
 	writeJSON(w, http.StatusCreated, order)
 }
 
@@ -159,6 +160,6 @@ func (a *API) createCourseCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	a.recordOrderDiscounts(r.Context(), order, &uid)
+	// Coupon + credit are consumed at payment-verify time, not here.
 	writeJSON(w, http.StatusCreated, order)
 }
