@@ -53,7 +53,8 @@ Core:
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | dev defaults — **change in prod** | Admin user created on first boot. |
 | `UPLOAD_DIR` | `uploads` | Where uploads are written. Mount a persistent volume here in prod. |
 | `CORS_ORIGIN` | `http://localhost:3000` | Allowed origin for the frontend. |
-| `PUBLIC_BASE_URL` | `http://localhost:3000` | Public site URL used in emails and payment redirects. |
+| `PUBLIC_BASE_URL` | `http://localhost:3000` | Public **site** URL (frontend). Used in emails and payment redirects. |
+| `API_PUBLIC_URL` | `http://localhost:8080` | Public **API** URL (this backend). Used to render absolute download links in order emails. |
 | `PAYMENT_CURRENCY` | `KES` | Default checkout currency. |
 
 Payments (optional — leave blank to disable):

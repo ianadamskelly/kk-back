@@ -23,6 +23,38 @@ type Mailer interface {
 	// rendered verbatim into the footer so each recipient gets their own
 	// token. bodyHTML is the admin-written rich-text content.
 	SendNewsletter(ctx context.Context, toEmail, toName, subject, bodyHTML, unsubscribeURL string) error
+	// SendOrderConfirmation greets a buyer immediately after they place
+	// an order. The amount is formatted by the caller (KES/USD aware).
+	SendOrderConfirmation(ctx context.Context, toEmail, toName string, summary OrderEmailSummary) error
+	// SendOrderFulfilled tells the buyer the order is ready. For digital
+	// products, downloads[] carries pre-signed direct links.
+	SendOrderFulfilled(ctx context.Context, toEmail, toName string, summary OrderEmailSummary, downloads []EmailDownloadLink) error
+}
+
+// OrderEmailSummary is the minimum every order-email needs to render
+// its body. Built once by the API layer so the mailer doesn't have to
+// know about the store package.
+type OrderEmailSummary struct {
+	OrderID       int64
+	CustomerName  string
+	Lines         []OrderEmailLine // product, quantity, line total (already formatted)
+	TotalFormatted string          // e.g. "KSh 4,500" — caller decides currency
+	AccountURL    string           // link to /account/orders on the frontend
+}
+
+// OrderEmailLine is one line item, pre-formatted for display.
+type OrderEmailLine struct {
+	Name      string
+	Quantity  int
+	Subtotal  string // e.g. "KSh 2,500"
+}
+
+// EmailDownloadLink is one downloadable file with its signed, time-
+// limited URL. The mailer doesn't sign these — it just renders them.
+type EmailDownloadLink struct {
+	Label     string
+	URL       string // absolute, includes API_PUBLIC_URL
+	SizeHuman string // e.g. "2.4 MB" or "" if unknown
 }
 
 // SMTPMailer sends mail via a configured SMTP server.
@@ -120,6 +152,106 @@ func stripHTML(in string) string {
 	// Collapse runs of whitespace so the text version is readable.
 	s := strings.Join(strings.Fields(out.String()), " ")
 	return s
+}
+
+// SendOrderConfirmation greets a buyer with an order summary the
+// moment their order is placed (still pending until payment lands).
+func (m *SMTPMailer) SendOrderConfirmation(_ context.Context, toEmail, toName string, s OrderEmailSummary) error {
+	subject := fmt.Sprintf("Order #%d received — Kuza Kizazi", s.OrderID)
+	greeting := buildGreeting(toName)
+
+	var rowsHTML, rowsText strings.Builder
+	for _, l := range s.Lines {
+		rowsHTML.WriteString(fmt.Sprintf(
+			`<tr><td style="padding:6px 0">%s × %d</td><td style="padding:6px 0;text-align:right">%s</td></tr>`,
+			html.EscapeString(l.Name), l.Quantity, html.EscapeString(l.Subtotal)))
+		rowsText.WriteString(fmt.Sprintf("  - %s × %d — %s\n", l.Name, l.Quantity, l.Subtotal))
+	}
+
+	htmlBody := fmt.Sprintf(`<!doctype html><html><body style="font-family:system-ui,sans-serif;color:#222;line-height:1.6;max-width:640px;margin:0 auto;padding:0 16px">
+<p>%s,</p>
+<p>Thanks for your order — we&rsquo;ve received <strong>order #%d</strong> and it&rsquo;s now awaiting payment confirmation.</p>
+<table style="width:100%%;border-collapse:collapse;margin:16px 0;font-size:14px">
+%s
+<tr><td style="padding-top:10px;border-top:1px solid #eee"><strong>Total</strong></td><td style="padding-top:10px;border-top:1px solid #eee;text-align:right"><strong>%s</strong></td></tr>
+</table>
+<p>You can follow the order&rsquo;s status from your account: <a href="%s">%s</a></p>
+<p>— The Kuza Kizazi team</p>
+</body></html>`,
+		html.EscapeString(greeting), s.OrderID, rowsHTML.String(),
+		html.EscapeString(s.TotalFormatted), html.EscapeString(s.AccountURL), html.EscapeString(s.AccountURL))
+
+	textBody := fmt.Sprintf("%s,\n\nThanks for your order — we've received order #%d and it's now awaiting payment confirmation.\n\n%sTotal: %s\n\nFollow your order at: %s\n\n— The Kuza Kizazi team",
+		greeting, s.OrderID, rowsText.String(), s.TotalFormatted, s.AccountURL)
+
+	return m.send(toEmail, subject, textBody, htmlBody)
+}
+
+// SendOrderFulfilled tells the buyer their order is ready. For digital
+// products, the downloads list embeds direct download buttons; for
+// physical products it's an "on its way" note.
+func (m *SMTPMailer) SendOrderFulfilled(_ context.Context, toEmail, toName string, s OrderEmailSummary, downloads []EmailDownloadLink) error {
+	subject := fmt.Sprintf("Order #%d ready — Kuza Kizazi", s.OrderID)
+	greeting := buildGreeting(toName)
+
+	var rowsHTML, rowsText strings.Builder
+	for _, l := range s.Lines {
+		rowsHTML.WriteString(fmt.Sprintf(
+			`<tr><td style="padding:6px 0">%s × %d</td><td style="padding:6px 0;text-align:right">%s</td></tr>`,
+			html.EscapeString(l.Name), l.Quantity, html.EscapeString(l.Subtotal)))
+		rowsText.WriteString(fmt.Sprintf("  - %s × %d — %s\n", l.Name, l.Quantity, l.Subtotal))
+	}
+
+	var dlHTML, dlText strings.Builder
+	if len(downloads) > 0 {
+		dlHTML.WriteString(`<h3 style="margin-top:24px">Your downloads</h3><ul style="padding-left:18px">`)
+		dlText.WriteString("\nYour downloads:\n")
+		for _, d := range downloads {
+			label := d.Label
+			if d.SizeHuman != "" {
+				label = fmt.Sprintf("%s (%s)", d.Label, d.SizeHuman)
+			}
+			dlHTML.WriteString(fmt.Sprintf(`<li style="margin:6px 0"><a href="%s" style="color:#e7572f;font-weight:600">⬇ %s</a></li>`,
+				html.EscapeString(d.URL), html.EscapeString(label)))
+			dlText.WriteString(fmt.Sprintf("  - %s: %s\n", label, d.URL))
+		}
+		dlHTML.WriteString(`</ul><p style="font-size:13px;color:#888">These links are personal to you and stay valid for 7 days. After that, head to your account to fetch fresh links any time.</p>`)
+		dlText.WriteString("\nThese links are personal and valid for 7 days; fetch fresh links from your account any time after that.\n")
+	}
+
+	bodyNote := "Your order has been fulfilled."
+	if len(downloads) > 0 {
+		bodyNote = "Your order has been fulfilled and your downloads are ready below."
+	}
+
+	htmlBody := fmt.Sprintf(`<!doctype html><html><body style="font-family:system-ui,sans-serif;color:#222;line-height:1.6;max-width:640px;margin:0 auto;padding:0 16px">
+<p>%s,</p>
+<p>%s</p>
+<table style="width:100%%;border-collapse:collapse;margin:16px 0;font-size:14px">
+%s
+<tr><td style="padding-top:10px;border-top:1px solid #eee"><strong>Total</strong></td><td style="padding-top:10px;border-top:1px solid #eee;text-align:right"><strong>%s</strong></td></tr>
+</table>
+%s
+<p>Manage your purchases at <a href="%s">%s</a></p>
+<p>— The Kuza Kizazi team</p>
+</body></html>`,
+		html.EscapeString(greeting), html.EscapeString(bodyNote), rowsHTML.String(),
+		html.EscapeString(s.TotalFormatted), dlHTML.String(),
+		html.EscapeString(s.AccountURL), html.EscapeString(s.AccountURL))
+
+	textBody := fmt.Sprintf("%s,\n\n%s\n\n%sTotal: %s\n%s\nManage your purchases at %s\n\n— The Kuza Kizazi team",
+		greeting, bodyNote, rowsText.String(), s.TotalFormatted, dlText.String(), s.AccountURL)
+
+	return m.send(toEmail, subject, textBody, htmlBody)
+}
+
+// buildGreeting returns "Hi <name>," or "Hello," when no name is known.
+func buildGreeting(toName string) string {
+	g := strings.TrimSpace(toName)
+	if g == "" {
+		return "Hello"
+	}
+	return "Hi " + g
 }
 
 // SendInvite renders and sends the invitation email.

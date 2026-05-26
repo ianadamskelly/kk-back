@@ -288,6 +288,7 @@ func (a *API) applyFlutterwaveVerify(r *http.Request, payment *store.Payment) er
 		}
 		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
 		a.applyEntitlements(r, payment.OrderID)
+		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
 	case resp.Data.Status == "failed" || resp.Data.Status == "cancelled":
 		payment.Status = resp.Data.Status
 		payment.RawResponse = resp.Raw
@@ -331,6 +332,7 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 		}
 		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
 		a.applyEntitlements(r, payment.OrderID)
+		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
 	case "failure":
 		payment.Status = "failed"
 		payment.RawResponse = resp.Raw

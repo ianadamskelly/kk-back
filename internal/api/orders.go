@@ -101,6 +101,10 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	a.recordOrderDiscounts(r.Context(), order, uid)
 
+	// Fire-and-forget "order received" email — SMTP errors are logged
+	// but never block placement.
+	a.sendOrderConfirmationEmailAsync(order)
+
 	writeJSON(w, http.StatusCreated, order)
 }
 
@@ -192,6 +196,14 @@ func (a *API) updateOrder(w http.ResponseWriter, r *http.Request) {
 	// off-gateway payments (bank transfer, manual reconciliation) work end-to-end.
 	if in.Status == "confirmed" {
 		a.applyEntitlements(r, id)
+	}
+	// When the admin marks an order fulfilled, send the buyer the
+	// "your order is ready" email — with download links for any
+	// digital items.
+	if in.Status == "fulfilled" {
+		if order, err := a.store.GetOrder(r.Context(), id); err == nil && order != nil {
+			a.sendOrderFulfilledEmailAsync(r.Context(), order)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": in.Status})
 }

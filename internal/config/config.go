@@ -16,7 +16,8 @@ type Config struct {
 	UploadDir         string
 	CORSOrigin        string
 
-	PublicBaseURL   string
+	PublicBaseURL   string // frontend, e.g. https://kuzakizazi.com
+	APIPublicURL    string // backend, e.g. https://api.kuzakizazi.com — used in emails for download links
 	PaymentCurrency string
 
 	FlutterwavePublicKey  string
@@ -53,6 +54,7 @@ func Load() Config {
 		CORSOrigin:        env("CORS_ORIGIN", "http://localhost:3000"),
 
 		PublicBaseURL:   env("PUBLIC_BASE_URL", "http://localhost:3000"),
+		APIPublicURL:    env("API_PUBLIC_URL", "http://localhost:8080"),
 		PaymentCurrency: env("PAYMENT_CURRENCY", "KES"),
 
 		FlutterwavePublicKey:  os.Getenv("FLUTTERWAVE_PUBLIC_KEY"),
