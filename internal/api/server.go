@@ -76,6 +76,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		// even after the cookie/session expires.
 		r.Get("/downloads/{token}", a.downloadFile)
 
+		// Certificate verify + download — the code is the only auth.
+		// Verify is a small JSON for the share-friendly page; download
+		// streams the PDF straight to the browser.
+		r.Get("/cert/{code}", a.getPublicCertificate)
+		r.Get("/cert/{code}/download", a.downloadCertificate)
+
 		// --- Authentication ---
 		r.Post("/admin/login", a.login) // legacy alias used by the admin app
 		r.Post("/auth/login", a.login)
@@ -115,6 +121,9 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// submit / re-submit a response).
 			r.Get("/account/courses/{slug}/tasks", a.listMyCourseTasks)
 			r.Post("/account/tasks/{taskId}/submit", a.submitCourseTask)
+
+			// Certificates earned by the signed-in customer.
+			r.Get("/account/certificates", a.listMyCertificates)
 
 			// Tickets (the "Complaints" tab).
 			r.Get("/account/tickets", a.listMyTickets)
@@ -264,6 +273,11 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}/tasks/{taskId}", a.deleteCourseTask)
 			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/submissions", a.listAdminCourseSubmissions)
 			r.With(a.requirePermission("courses.manage")).Put("/admin/submissions/{submissionId}/grade", a.gradeSubmission)
+			// Manual cert issuance from the admin (e.g. for courses
+			// without required-pass tasks where there's no automatic
+			// trigger). Idempotent — re-running returns the existing
+			// row instead of minting a fresh code.
+			r.With(a.requirePermission("courses.manage")).Post("/admin/courses/{id}/certificates", a.issueAdminCertificate)
 
 			// Library.
 			r.With(a.requirePermission("library.view")).Get("/admin/library", a.listAdminLibrary)

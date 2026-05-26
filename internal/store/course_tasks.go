@@ -169,6 +169,19 @@ func (s *Store) AdminListSubmissionsForCourse(ctx context.Context, courseID int6
 	return out, rows.Err()
 }
 
+// SubmissionContext returns (user_id, course_id) for a submission —
+// used by callers that need to trigger course-level side effects
+// (cert auto-issue) without re-fetching the full submission row.
+func (s *Store) SubmissionContext(ctx context.Context, submissionID int64) (userID, courseID int64, err error) {
+	err = s.pool.QueryRow(ctx, `
+		SELECT s.user_id, t.course_id
+		FROM course_task_submissions s
+		JOIN course_tasks t ON t.id = s.task_id
+		WHERE s.id = $1`,
+		submissionID).Scan(&userID, &courseID)
+	return userID, courseID, err
+}
+
 // GradeSubmission sets the grade + feedback and stamps graded_at.
 func (s *Store) GradeSubmission(ctx context.Context, submissionID, graderID int64, grade, feedback string) error {
 	if grade != "passed" && grade != "failed" {

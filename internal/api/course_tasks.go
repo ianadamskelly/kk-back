@@ -127,6 +127,15 @@ func (a *API) gradeSubmission(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// If this was the last required-pass task standing between the
+	// student and a certificate, mint + email it now. The helper
+	// is a no-op when the course has no required-pass tasks or the
+	// student still has outstanding ones.
+	if in.Grade == "passed" {
+		if userID, courseID, err := a.store.SubmissionContext(r.Context(), submissionID); err == nil && userID > 0 && courseID > 0 {
+			a.issueCertificateForCompletion(r.Context(), userID, courseID)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
