@@ -333,3 +333,63 @@ func (a *API) deleteLesson(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// --- Course resources (links/files attached to a course or lesson) ---
+
+func (a *API) listCourseResources(w http.ResponseWriter, r *http.Request) {
+	courseID := parseID(chi.URLParam(r, "id"))
+	items, err := a.store.ListCourseResources(r.Context(), courseID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (a *API) addCourseResource(w http.ResponseWriter, r *http.Request) {
+	courseID := parseID(chi.URLParam(r, "id"))
+	if _, err := a.store.GetCourseByID(r.Context(), courseID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "course not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var in struct {
+		LessonID *int64 `json:"lessonId"`
+		Label    string `json:"label"`
+		URL      string `json:"url"`
+		Kind     string `json:"kind"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.URL == "" || in.Label == "" {
+		writeError(w, http.StatusBadRequest, "label and url are required")
+		return
+	}
+	res := &store.CourseResource{
+		CourseID: courseID,
+		LessonID: in.LessonID,
+		Label:    in.Label,
+		URL:      in.URL,
+		Kind:     in.Kind,
+	}
+	if err := a.store.AddCourseResource(r.Context(), res); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, res)
+}
+
+func (a *API) deleteCourseResource(w http.ResponseWriter, r *http.Request) {
+	courseID := parseID(chi.URLParam(r, "id"))
+	resourceID := parseID(chi.URLParam(r, "resourceId"))
+	if err := a.store.DeleteCourseResource(r.Context(), courseID, resourceID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "resource not found for this course")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

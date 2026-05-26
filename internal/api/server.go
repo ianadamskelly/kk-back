@@ -246,6 +246,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("courses.manage")).Put("/admin/lessons/{id}", a.updateLesson)
 			r.With(a.requirePermission("courses.manage")).Delete("/admin/lessons/{id}", a.deleteLesson)
 
+			// Resources attached to a course or to one of its lessons.
+			// lessonId on POST is optional — null = course-wide.
+			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/resources", a.listCourseResources)
+			r.With(a.requirePermission("courses.manage")).Post("/admin/courses/{id}/resources", a.addCourseResource)
+			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}/resources/{resourceId}", a.deleteCourseResource)
+
 			// Library.
 			r.With(a.requirePermission("library.view")).Get("/admin/library", a.listAdminLibrary)
 			r.With(a.requirePermission("library.view")).Get("/admin/library/{id}", a.getAdminLibraryResource)

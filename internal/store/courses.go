@@ -9,43 +9,62 @@ import (
 // fields (PromoVideo / Prerequisites / Outcomes) power the public detail
 // page and are managed via the LMS course wizard.
 type Course struct {
-	ID            int64     `json:"id" db:"id"`
-	Slug          string    `json:"slug" db:"slug"`
-	Title         string    `json:"title" db:"title"`
-	Summary       string    `json:"summary" db:"summary"`
-	Description   string    `json:"description" db:"description"`
-	CoverImage    string    `json:"coverImage" db:"cover_image"`
-	Level         string    `json:"level" db:"level"`
-	Duration      string    `json:"duration" db:"duration"`
-	Instructor    string    `json:"instructor" db:"instructor"`
-	Category      string    `json:"category" db:"category"`
-	Language      string    `json:"language" db:"language"`
-	PromoVideo    string    `json:"promoVideo" db:"promo_video"`
-	Prerequisites string    `json:"prerequisites" db:"prerequisites"`
-	Outcomes      string    `json:"outcomes" db:"outcomes"`
-	PriceCents    int64     `json:"priceCents" db:"price_cents"`
-	Status        string    `json:"status" db:"status"`
-	SortOrder     int       `json:"sortOrder" db:"sort_order"`
-	CreatedAt     time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt     time.Time `json:"updatedAt" db:"updated_at"`
-	Lessons       []Lesson  `json:"lessons" db:"-"`
+	ID            int64            `json:"id" db:"id"`
+	Slug          string           `json:"slug" db:"slug"`
+	Title         string           `json:"title" db:"title"`
+	Summary       string           `json:"summary" db:"summary"`
+	Description   string           `json:"description" db:"description"`
+	CoverImage    string           `json:"coverImage" db:"cover_image"`
+	Level         string           `json:"level" db:"level"`
+	Duration      string           `json:"duration" db:"duration"`
+	Instructor    string           `json:"instructor" db:"instructor"`
+	Category      string           `json:"category" db:"category"`
+	Language      string           `json:"language" db:"language"`
+	PromoVideo    string           `json:"promoVideo" db:"promo_video"`
+	Prerequisites string           `json:"prerequisites" db:"prerequisites"`
+	Outcomes      string           `json:"outcomes" db:"outcomes"`
+	PriceCents    int64            `json:"priceCents" db:"price_cents"`
+	Status        string           `json:"status" db:"status"`
+	SortOrder     int              `json:"sortOrder" db:"sort_order"`
+	CreatedAt     time.Time        `json:"createdAt" db:"created_at"`
+	UpdatedAt     time.Time        `json:"updatedAt" db:"updated_at"`
+	Lessons       []Lesson         `json:"lessons" db:"-"`
+	Resources     []CourseResource `json:"resources" db:"-"` // course-wide (lesson_id IS NULL)
 }
+
+// CourseResource is either a link or an uploaded file attached to a
+// course or to a specific lesson. LessonID is nil for course-wide
+// resources (shown on the course landing page); set for lesson-specific
+// resources (shown in the lesson runner).
+type CourseResource struct {
+	ID        int64     `json:"id" db:"id"`
+	CourseID  int64     `json:"courseId" db:"course_id"`
+	LessonID  *int64    `json:"lessonId" db:"lesson_id"`
+	Label     string    `json:"label" db:"label"`
+	URL       string    `json:"url" db:"url"`
+	Kind      string    `json:"kind" db:"kind"` // "link" | "file"
+	SortOrder int       `json:"sortOrder" db:"sort_order"`
+	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+}
+
+const courseResourceSelect = `SELECT id, course_id, lesson_id, label, url, kind, sort_order, created_at FROM course_resources`
 
 // Lesson is a single unit of a course. IsPreview makes the lesson viewable
 // by non-buyers as a free sample.
 type Lesson struct {
-	ID        int64     `json:"id" db:"id"`
-	CourseID  int64     `json:"courseId" db:"course_id"`
-	Module    string    `json:"module" db:"module"`
-	Slug      string    `json:"slug" db:"slug"`
-	Title     string    `json:"title" db:"title"`
-	Content   string    `json:"content" db:"content"`
-	VideoURL  string    `json:"videoUrl" db:"video_url"`
-	Duration  string    `json:"duration" db:"duration"`
-	IsPreview bool      `json:"isPreview" db:"is_preview"`
-	SortOrder int       `json:"sortOrder" db:"sort_order"`
-	CreatedAt time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
+	ID        int64            `json:"id" db:"id"`
+	CourseID  int64            `json:"courseId" db:"course_id"`
+	Module    string           `json:"module" db:"module"`
+	Slug      string           `json:"slug" db:"slug"`
+	Title     string           `json:"title" db:"title"`
+	Content   string           `json:"content" db:"content"`
+	VideoURL  string           `json:"videoUrl" db:"video_url"`
+	Duration  string           `json:"duration" db:"duration"`
+	IsPreview bool             `json:"isPreview" db:"is_preview"`
+	SortOrder int              `json:"sortOrder" db:"sort_order"`
+	CreatedAt time.Time        `json:"createdAt" db:"created_at"`
+	UpdatedAt time.Time        `json:"updatedAt" db:"updated_at"`
+	Resources []CourseResource `json:"resources" db:"-"`
 }
 
 const courseSelect = `SELECT id, slug, title, summary, description, cover_image, level, duration, instructor, category, language, promo_video, prerequisites, outcomes, price_cents, status, sort_order, created_at, updated_at FROM courses`
@@ -61,17 +80,23 @@ func (s *Store) ListCourses(ctx context.Context, publishedOnly bool) ([]Course, 
 	return queryRows[Course](ctx, s.pool, q)
 }
 
-// GetCourseByID returns one course with its lessons.
+// GetCourseByID returns one course with its lessons and resources.
 func (s *Store) GetCourseByID(ctx context.Context, id int64) (*Course, error) {
 	course, err := queryOne[Course](ctx, s.pool, courseSelect+` WHERE id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
 	course.Lessons, err = s.ListLessons(ctx, course.ID)
-	return course, err
+	if err != nil {
+		return nil, err
+	}
+	if err := s.AttachCourseResources(ctx, course); err != nil {
+		return nil, err
+	}
+	return course, nil
 }
 
-// GetCourseBySlug returns one course with its lessons.
+// GetCourseBySlug returns one course with its lessons and resources.
 func (s *Store) GetCourseBySlug(ctx context.Context, slug string, publishedOnly bool) (*Course, error) {
 	q := courseSelect + ` WHERE slug = $1`
 	if publishedOnly {
@@ -82,7 +107,13 @@ func (s *Store) GetCourseBySlug(ctx context.Context, slug string, publishedOnly 
 		return nil, err
 	}
 	course.Lessons, err = s.ListLessons(ctx, course.ID)
-	return course, err
+	if err != nil {
+		return nil, err
+	}
+	if err := s.AttachCourseResources(ctx, course); err != nil {
+		return nil, err
+	}
+	return course, nil
 }
 
 // CreateCourse inserts a course, generating a unique slug.
@@ -250,6 +281,88 @@ func (s *Store) ReorderLessons(ctx context.Context, courseID int64, items []Less
 // DeleteLesson removes a lesson by id.
 func (s *Store) DeleteLesson(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM lessons WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// --- Course resources ---
+
+// AttachCourseResources loads every resource for the course (course-
+// wide and per-lesson) in a single query, then distributes them onto
+// course.Resources (course-wide) and lesson.Resources (per-lesson).
+func (s *Store) AttachCourseResources(ctx context.Context, c *Course) error {
+	if c == nil {
+		return nil
+	}
+	rows, err := queryRows[CourseResource](ctx, s.pool,
+		courseResourceSelect+` WHERE course_id = $1 ORDER BY sort_order, id`, c.ID)
+	if err != nil {
+		return err
+	}
+	c.Resources = []CourseResource{}
+	byLesson := map[int64][]CourseResource{}
+	for _, r := range rows {
+		if r.LessonID == nil {
+			c.Resources = append(c.Resources, r)
+		} else {
+			byLesson[*r.LessonID] = append(byLesson[*r.LessonID], r)
+		}
+	}
+	for i := range c.Lessons {
+		c.Lessons[i].Resources = byLesson[c.Lessons[i].ID]
+		if c.Lessons[i].Resources == nil {
+			c.Lessons[i].Resources = []CourseResource{}
+		}
+	}
+	return nil
+}
+
+// ListCourseResources returns every resource for a course, both
+// course-wide and lesson-scoped, ordered for the admin view.
+func (s *Store) ListCourseResources(ctx context.Context, courseID int64) ([]CourseResource, error) {
+	return queryRows[CourseResource](ctx, s.pool,
+		courseResourceSelect+` WHERE course_id = $1 ORDER BY (lesson_id IS NOT NULL), lesson_id NULLS FIRST, sort_order, id`,
+		courseID)
+}
+
+// AddCourseResource creates a new resource. LessonID nil = course-wide.
+func (s *Store) AddCourseResource(ctx context.Context, r *CourseResource) error {
+	if r.Kind == "" {
+		r.Kind = "link"
+	}
+	var nextPos int
+	if r.LessonID != nil {
+		if err := s.pool.QueryRow(ctx,
+			`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM course_resources WHERE lesson_id = $1`,
+			*r.LessonID).Scan(&nextPos); err != nil {
+			return err
+		}
+	} else {
+		if err := s.pool.QueryRow(ctx,
+			`SELECT COALESCE(MAX(sort_order), -1) + 1 FROM course_resources WHERE course_id = $1 AND lesson_id IS NULL`,
+			r.CourseID).Scan(&nextPos); err != nil {
+			return err
+		}
+	}
+	r.SortOrder = nextPos
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO course_resources (course_id, lesson_id, label, url, kind, sort_order)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id, created_at`,
+		r.CourseID, r.LessonID, r.Label, r.URL, r.Kind, r.SortOrder,
+	).Scan(&r.ID, &r.CreatedAt)
+}
+
+// DeleteCourseResource removes one resource if it belongs to the course.
+func (s *Store) DeleteCourseResource(ctx context.Context, courseID, resourceID int64) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM course_resources WHERE id = $1 AND course_id = $2`,
+		resourceID, courseID)
 	if err != nil {
 		return err
 	}
