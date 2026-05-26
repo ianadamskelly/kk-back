@@ -65,12 +65,18 @@ type RevenueSummary struct {
 
 func (s *Store) RevenueSummary(ctx context.Context) (*RevenueSummary, error) {
 	out := &RevenueSummary{}
+	// 'confirmed' = paid but not yet shipped (or digital, where there's
+	// nothing to ship). 'fulfilled' = paid and shipped. Both are paid
+	// orders and should count as revenue; only 'pending' (unpaid) and
+	// 'cancelled' should be excluded. Previously this filtered to
+	// 'confirmed' only, which made shop revenue silently disappear the
+	// moment an admin marked an order fulfilled.
 	if err := s.pool.QueryRow(ctx, `
 		SELECT
 			COALESCE(SUM(CASE WHEN kind = 'shop'       THEN total_cents END), 0),
 			COALESCE(SUM(CASE WHEN kind = 'course'     THEN total_cents END), 0),
 			COALESCE(SUM(CASE WHEN kind = 'membership' THEN total_cents END), 0)
-		FROM orders WHERE status = 'confirmed'`,
+		FROM orders WHERE status IN ('confirmed', 'fulfilled')`,
 	).Scan(&out.Shop, &out.Courses, &out.Memberships); err != nil {
 		return nil, err
 	}
