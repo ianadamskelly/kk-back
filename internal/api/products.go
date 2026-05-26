@@ -46,6 +46,12 @@ func (a *API) getPublicProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	images, err := a.store.ListProductImages(r.Context(), item.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	item.Images = images
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -68,6 +74,12 @@ func (a *API) getAdminProduct(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	images, err := a.store.ListProductImages(r.Context(), item.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	item.Images = images
 	writeJSON(w, http.StatusOK, item)
 }
 
@@ -135,6 +147,95 @@ func (a *API) deleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Product image gallery ---
+
+func (a *API) listProductImages(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	images, err := a.store.ListProductImages(r.Context(), productID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, images)
+}
+
+// addProductImage attaches an already-uploaded image URL (returned by
+// the existing POST /api/admin/upload endpoint) to a product.
+func (a *API) addProductImage(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	if _, err := a.store.GetProductByID(r.Context(), productID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "product not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var in struct {
+		URL string `json:"url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.URL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	img, err := a.store.AddProductImage(r.Context(), productID, in.URL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, img)
+}
+
+// reorderProductImages rewrites the position field on each image to
+// match the given ordering. Body: {"ids": [3, 1, 2]}.
+func (a *API) reorderProductImages(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	var in struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := a.store.SetProductImageOrder(r.Context(), productID, in.IDs); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "one of the images does not belong to this product")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) setProductCoverImage(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	imageID := parseID(chi.URLParam(r, "imageId"))
+	if err := a.store.SetProductCoverImage(r.Context(), productID, imageID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "image not found for this product")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *API) deleteProductImage(w http.ResponseWriter, r *http.Request) {
+	productID := parseID(chi.URLParam(r, "id"))
+	imageID := parseID(chi.URLParam(r, "imageId"))
+	if err := a.store.DeleteProductImage(r.Context(), productID, imageID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "image not found for this product")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

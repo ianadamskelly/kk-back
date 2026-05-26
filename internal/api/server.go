@@ -189,6 +189,13 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("products.manage")).Post("/admin/products", a.createProduct)
 			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}", a.updateProduct)
 			r.With(a.requirePermission("products.manage")).Delete("/admin/products/{id}", a.deleteProduct)
+			// Product image gallery: attach already-uploaded image URLs
+			// (from POST /api/admin/upload), reorder them, mark cover.
+			r.With(a.requirePermission("products.view")).Get("/admin/products/{id}/images", a.listProductImages)
+			r.With(a.requirePermission("products.manage")).Post("/admin/products/{id}/images", a.addProductImage)
+			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}/images/order", a.reorderProductImages)
+			r.With(a.requirePermission("products.manage")).Put("/admin/products/{id}/images/{imageId}/cover", a.setProductCoverImage)
+			r.With(a.requirePermission("products.manage")).Delete("/admin/products/{id}/images/{imageId}", a.deleteProductImage)
 
 			// Orders.
 			r.With(a.requirePermission("orders.view")).Get("/admin/orders", a.listOrders)

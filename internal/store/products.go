@@ -5,23 +5,44 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Product is an item sold in the shop.
+//
+// The Image column is a denormalised "cover" URL — kept in sync with
+// the cover row in product_images. List endpoints can read it without
+// joining; the gallery endpoints use the product_images table directly.
 type Product struct {
-	ID          int64     `json:"id" db:"id"`
-	Slug        string    `json:"slug" db:"slug"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	Body        string    `json:"body" db:"body"`
-	PriceCents  int64     `json:"priceCents" db:"price_cents"`
-	Image       string    `json:"image" db:"image"`
-	Category    string    `json:"category" db:"category"`
-	Status      string    `json:"status" db:"status"`
-	SortOrder   int       `json:"sortOrder" db:"sort_order"`
-	CreatedAt   time.Time `json:"createdAt" db:"created_at"`
-	UpdatedAt   time.Time `json:"updatedAt" db:"updated_at"`
+	ID          int64          `json:"id" db:"id"`
+	Slug        string         `json:"slug" db:"slug"`
+	Name        string         `json:"name" db:"name"`
+	Description string         `json:"description" db:"description"`
+	Body        string         `json:"body" db:"body"`
+	PriceCents  int64          `json:"priceCents" db:"price_cents"`
+	Image       string         `json:"image" db:"image"`
+	Category    string         `json:"category" db:"category"`
+	Status      string         `json:"status" db:"status"`
+	SortOrder   int            `json:"sortOrder" db:"sort_order"`
+	CreatedAt   time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt   time.Time      `json:"updatedAt" db:"updated_at"`
+	Images      []ProductImage `json:"images" db:"-"`
 }
+
+// ProductImage is one image in a product's gallery. Exactly one image
+// per product has is_cover = true; the cover's URL is also denormalised
+// into products.image for cheap listings.
+type ProductImage struct {
+	ID        int64     `json:"id" db:"id"`
+	ProductID int64     `json:"productId" db:"product_id"`
+	URL       string    `json:"url" db:"url"`
+	Position  int       `json:"position" db:"position"`
+	IsCover   bool      `json:"isCover" db:"is_cover"`
+	CreatedAt time.Time `json:"createdAt" db:"created_at"`
+}
+
+const productImageSelect = `SELECT id, product_id, url, position, is_cover, created_at FROM product_images`
 
 // ProductFilter controls filtering for ListProducts.
 type ProductFilter struct {
@@ -132,4 +153,203 @@ func (s *Store) DeleteProduct(ctx context.Context, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ListProductImages returns every image attached to a product, ordered
+// for gallery display (position asc, cover first when positions tie).
+func (s *Store) ListProductImages(ctx context.Context, productID int64) ([]ProductImage, error) {
+	return queryRows[ProductImage](ctx, s.pool,
+		productImageSelect+` WHERE product_id = $1 ORDER BY is_cover DESC, position ASC, id ASC`,
+		productID)
+}
+
+// AttachProductImages loads images for each product and attaches them
+// to the Images field. Single query for the whole set, suitable for
+// admin list pages; public listings should keep using the denormalised
+// Image column instead.
+func (s *Store) AttachProductImages(ctx context.Context, products []Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(products))
+	for i, p := range products {
+		ids[i] = p.ID
+	}
+	images, err := queryRows[ProductImage](ctx, s.pool,
+		productImageSelect+` WHERE product_id = ANY($1) ORDER BY is_cover DESC, position ASC, id ASC`,
+		ids)
+	if err != nil {
+		return err
+	}
+	byProduct := map[int64][]ProductImage{}
+	for _, img := range images {
+		byProduct[img.ProductID] = append(byProduct[img.ProductID], img)
+	}
+	for i := range products {
+		products[i].Images = byProduct[products[i].ID]
+		if products[i].Images == nil {
+			products[i].Images = []ProductImage{}
+		}
+	}
+	return nil
+}
+
+// AddProductImage appends a new image to a product. If the product has
+// no cover image yet, the new image becomes the cover and the parent
+// product's Image column is updated to match.
+func (s *Store) AddProductImage(ctx context.Context, productID int64, url string) (*ProductImage, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var nextPos int
+	if err := tx.QueryRow(ctx,
+		`SELECT COALESCE(MAX(position), -1) + 1 FROM product_images WHERE product_id = $1`,
+		productID).Scan(&nextPos); err != nil {
+		return nil, err
+	}
+	var hasCover bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM product_images WHERE product_id = $1 AND is_cover = TRUE)`,
+		productID).Scan(&hasCover); err != nil {
+		return nil, err
+	}
+
+	img := &ProductImage{ProductID: productID, URL: url, Position: nextPos, IsCover: !hasCover}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO product_images (product_id, url, position, is_cover)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at`,
+		img.ProductID, img.URL, img.Position, img.IsCover,
+	).Scan(&img.ID, &img.CreatedAt); err != nil {
+		return nil, err
+	}
+	if img.IsCover {
+		if _, err := tx.Exec(ctx,
+			`UPDATE products SET image = $1, updated_at = now() WHERE id = $2`,
+			img.URL, productID); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return img, nil
+}
+
+// SetProductImageOrder rewrites image positions to match the given
+// ordering. IDs not in orderedIDs are appended to the end in their
+// previous order so a partial reorder doesn't lose anything.
+func (s *Store) SetProductImageOrder(ctx context.Context, productID int64, orderedIDs []int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	for i, id := range orderedIDs {
+		tag, err := tx.Exec(ctx,
+			`UPDATE product_images SET position = $1 WHERE id = $2 AND product_id = $3`,
+			i, id, productID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// SetProductCoverImage marks the given image as cover (clearing the
+// previous cover) and updates the parent product's Image column.
+func (s *Store) SetProductCoverImage(ctx context.Context, productID, imageID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var url string
+	if err := tx.QueryRow(ctx,
+		`SELECT url FROM product_images WHERE id = $1 AND product_id = $2`,
+		imageID, productID).Scan(&url); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE product_images SET is_cover = FALSE WHERE product_id = $1 AND is_cover = TRUE`,
+		productID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE product_images SET is_cover = TRUE WHERE id = $1`, imageID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE products SET image = $1, updated_at = now() WHERE id = $2`,
+		url, productID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteProductImage removes one image. If it was the cover, the next
+// image by position is promoted to cover (and the product's Image
+// column is updated). If no images remain, products.image is cleared.
+func (s *Store) DeleteProductImage(ctx context.Context, productID, imageID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var wasCover bool
+	if err := tx.QueryRow(ctx,
+		`SELECT is_cover FROM product_images WHERE id = $1 AND product_id = $2`,
+		imageID, productID).Scan(&wasCover); err != nil {
+		if err == pgx.ErrNoRows {
+			return ErrNotFound
+		}
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM product_images WHERE id = $1`, imageID); err != nil {
+		return err
+	}
+	if wasCover {
+		// Promote the next image by position to cover (if any).
+		var newCoverID int64
+		var newCoverURL string
+		err := tx.QueryRow(ctx, `
+			SELECT id, url FROM product_images
+			WHERE product_id = $1
+			ORDER BY position ASC, id ASC LIMIT 1`,
+			productID).Scan(&newCoverID, &newCoverURL)
+		switch err {
+		case nil:
+			if _, err := tx.Exec(ctx,
+				`UPDATE product_images SET is_cover = TRUE WHERE id = $1`, newCoverID); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx,
+				`UPDATE products SET image = $1, updated_at = now() WHERE id = $2`,
+				newCoverURL, productID); err != nil {
+				return err
+			}
+		case pgx.ErrNoRows:
+			// No images left — clear the cover URL.
+			if _, err := tx.Exec(ctx,
+				`UPDATE products SET image = '', updated_at = now() WHERE id = $1`,
+				productID); err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
