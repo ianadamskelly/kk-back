@@ -35,6 +35,11 @@ func main() {
 		log.Fatalf("could not seed database: %v", err)
 	}
 
+	// One-shot relocation of any pre-protected-uploads-dir payloads
+	// still living under /uploads/. Idempotent — runs every boot but
+	// does nothing once everything is already under /files/.
+	api.MigrateLegacyProtectedFiles(ctx, cfg, st)
+
 	handler := api.NewRouter(cfg, st)
 	addr := ":" + cfg.Port
 	log.Printf("Kuza Kizazi API listening on http://localhost%s", addr)

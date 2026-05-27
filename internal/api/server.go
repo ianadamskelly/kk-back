@@ -25,6 +25,14 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		mailer: NewMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom, cfg.SMTPTLS),
 	}
 
+	// Per-IP buckets shared across the auth surface. login + register
+	// are the two endpoints that touch credentials; both get rate-
+	// limited so a single host can't sit on a wordlist all night.
+	// loginLimiter is a touch more generous since legitimate users
+	// fat-finger passwords; register stays tight to slow signup abuse.
+	loginLimiter := newIPRateLimiter(20, 10) // 20/min, burst 10
+	registerLimiter := newIPRateLimiter(5, 3) // 5/min, burst 3
+
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
@@ -92,11 +100,13 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Get("/cert/{code}/download", a.downloadCertificate)
 
 		// --- Authentication ---
-		r.Post("/admin/login", a.login) // legacy alias used by the admin app
-		r.Post("/auth/login", a.login)
-		r.Post("/auth/register", a.register)
+		// Login + register are rate-limited per IP (see top of NewRouter).
+		r.With(rateLimit(loginLimiter)).Post("/admin/login", a.login)
+		r.With(rateLimit(loginLimiter)).Post("/auth/login", a.login)
+		r.With(rateLimit(registerLimiter)).Post("/auth/register", a.register)
 		// Logout clears the kk_session HttpOnly cookie. Public so a
-		// stale-cookie caller can always sign themselves out.
+		// stale-cookie caller can always sign themselves out. No rate
+		// limit — being able to log out reliably matters.
 		r.Post("/auth/logout", a.logout)
 
 		// --- Account endpoints (any signed-in user) ---
