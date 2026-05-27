@@ -224,18 +224,18 @@ func (s *Store) seedSettings(ctx context.Context) error {
 		return nil
 	}
 	return s.UpdateSettings(ctx, map[string]string{
-		"site_name":          "Kuza Kizazi Kreative",
-		"tagline":            "Unleashing Creativity, Empowering Possibilities",
-		"footer_description": "A dynamic and forward-thinking global company dedicated to empowering the next generation through a diverse range of creative and innovative services.",
-		"hero_title":      "We turn bold visions into digital reality.",
-		"hero_subtitle":   "Kuza Kizazi is a Nairobi creative agency crafting brands, websites, and stories that move people.",
-		"contact_email":   "info@kuzakizazi.com",
-		"contact_phone":   "+254 745 357 116",
-		"contact_address": "Imenti House, Tom Mboya Street, Nairobi, Kenya",
-		"social_facebook": "https://facebook.com/kuzakizazi",
-		"social_instagram": "https://instagram.com/kuzakizazi",
-		"social_twitter":  "https://twitter.com/kuzakizazi",
-		"social_linkedin": "https://linkedin.com/company/kuzakizazi",
+		"site_name":          "Kuza Kizazi",
+		"tagline":            "Creative agency · Nairobi",
+		"footer_description": "Helping growing African brands build their identity, digital presence, and content systems through strategy, design, websites, media, and marketing.",
+		"hero_title":         "We turn bold visions into digital reality.",
+		"hero_subtitle":      "Kuza Kizazi is a Nairobi creative agency crafting brands, websites, and stories that move people.",
+		"contact_email":      "info@kuzakizazi.com",
+		"contact_phone":      "+254 745 357 116",
+		"contact_address":    "Imenti House, Tom Mboya Street, Nairobi, Kenya",
+		"social_facebook":    "https://facebook.com/kuzakizazi",
+		"social_instagram":   "https://instagram.com/kuzakizazi",
+		"social_twitter":     "https://twitter.com/kuzakizazi",
+		"social_linkedin":    "https://linkedin.com/company/kuzakizazi",
 	})
 }
 
@@ -264,30 +264,30 @@ func (s *Store) seedServices(ctx context.Context) error {
 		return err
 	}
 	services := []Service{
-		{Title: "Branding", Icon: "✦", SortOrder: 1,
-			Summary: "Logo systems, visual identity, and brand guidelines that make you unmistakable.",
-			Body:    "We build complete brand identities — from naming and logo design to colour, typography, and the guidelines that keep everything consistent as you grow."},
-		{Title: "Graphic Design", Icon: "✎", SortOrder: 2,
-			Summary: "Visual identities, logos, and marketing materials that resonate.",
-			Body:    "From pitch decks to packaging, our designers create polished, on-brand visuals that communicate clearly and convert."},
-		{Title: "Web Development", Icon: "⌘", SortOrder: 3,
-			Summary: "Responsive, high-performance websites and web applications.",
-			Body:    "We design and build fast, accessible, and maintainable websites and web apps using modern tooling and a solid engineering foundation."},
-		{Title: "Animation & Video", Icon: "▶", SortOrder: 4,
-			Summary: "2D/3D animation and professional video production that brings stories to life.",
-			Body:    "Explainer videos, motion graphics, and brand films — produced end to end, from script and storyboard to final cut."},
-		{Title: "Photography & Videography", Icon: "◉", SortOrder: 5,
-			Summary: "Studio and on-location shoots that capture your brand at its best.",
-			Body:    "Product, lifestyle, and corporate photography and video, art-directed to match your brand and ready for every channel."},
-		{Title: "Branded Merchandise", Icon: "✧", SortOrder: 6,
-			Summary: "Custom merchandise and print that puts your brand in people's hands.",
-			Body:    "Apparel, stationery, signage, and promotional items — designed, sourced, and produced to a consistent standard."},
-		{Title: "Online Presence Management", Icon: "❖", SortOrder: 7,
-			Summary: "We run your channels so your brand stays consistent and active.",
-			Body:    "Ongoing content, scheduling, and community management that keeps your social and web presence sharp without the daily effort."},
-		{Title: "Digital Marketing", Icon: "↗", SortOrder: 8,
-			Summary: "Strategic growth through SEO, social media, and targeted ad campaigns.",
-			Body:    "Data-driven campaigns that grow reach and revenue — search, social, and paid media, measured and optimised continuously."},
+		{Slug: "branding", Title: "Brand Identity", Icon: "✦", Pillar: "brand_identity", SortOrder: 1,
+			Summary: "Clear identity systems that help growing brands look consistent, credible, and memorable.",
+			Body:    "We shape the identity your audience recognises: strategy, logos, visual systems, and practical guidance your team can use consistently."},
+		{Slug: "graphic-design", Title: "Graphic Design", Icon: "✎", Pillar: "brand_identity", SortOrder: 2,
+			Summary: "Purposeful visual assets for campaigns, products, presentations, and everyday brand communication.",
+			Body:    "We translate your message into polished visual work across print and digital touchpoints, keeping every piece recognisably on brand."},
+		{Slug: "branded-merchandise", Title: "Branded Merchandise", Icon: "✧", Pillar: "brand_identity", SortOrder: 3,
+			Summary: "Wearable and tangible brand designs that extend your identity beyond the screen.",
+			Body:    "We design merchandise concepts and artwork that feel like a natural expression of your brand, ready for your chosen production partner."},
+		{Slug: "web-development", Title: "Web Development", Icon: "⌘", Pillar: "digital_platforms", SortOrder: 4,
+			Summary: "Fast, accessible websites and commerce experiences built around your business goals.",
+			Body:    "We design and build websites that make your offer easy to understand, easy to use, and ready to support growth."},
+		{Slug: "animation-video", Title: "Animation & Video", Icon: "▶", Pillar: "content_growth", SortOrder: 5,
+			Summary: "Motion-led storytelling that explains ideas and gives your content more energy.",
+			Body:    "From explainers to social motion, we develop animated and video content that communicates clearly and earns attention."},
+		{Slug: "photography-videography", Title: "Photography & Videography", Icon: "◉", Pillar: "content_growth", SortOrder: 6,
+			Summary: "Original photo and video content that captures your people, products, and moments.",
+			Body:    "We plan and create brand-aligned visuals for social channels, launches, products, events, and campaigns."},
+		{Slug: "online-presence-management", Title: "Content & Online Presence", Icon: "❖", Pillar: "content_growth", SortOrder: 7,
+			Summary: "Consistent content systems that keep your brand useful, visible, and active online.",
+			Body:    "We help you plan and manage valuable content, including editorial publishing and client-owned learning experiences."},
+		{Slug: "digital-marketing", Title: "Digital Marketing", Icon: "↗", Pillar: "content_growth", SortOrder: 8,
+			Summary: "Organic digital strategy focused on reaching the right audience and improving discoverability.",
+			Body:    "We support your growth through social strategy and search optimisation built around clear goals and useful content."},
 	}
 	for i := range services {
 		services[i].Status = "published"
@@ -413,14 +413,14 @@ func (s *Store) seedBlog(ctx context.Context) error {
 		{Title: "Why Your Agency Needs a Custom CMS",
 			Excerpt: "Off-the-shelf tools get you started — but a custom CMS is what lets your brand and your team move at full speed.",
 			Content: "Generic solutions often hold back creative potential.\n\nWhen every page, product, and story has to be forced into someone else's template, your brand ends up looking like everyone else's. A custom content system flips that: the structure fits your content, not the other way around.\n\nIt also makes your team faster. Editors update the site without filing tickets, and developers ship features without fighting a plugin ecosystem.\n\nThat is exactly the thinking behind the platform powering this very site.",
-			Status: "published"},
+			Status:  "published"},
 		{Title: "The Future of Dynamic Design in 2026",
 			Excerpt: "Design in 2026 is less about static layouts and more about systems that respond to people in real time.",
 			Content: "The best digital experiences in 2026 feel alive.\n\nThey adapt to the viewer — their device, their context, even their intent — without ever feeling chaotic. Behind that flexibility is a strong design system: tokens, components, and rules that keep things consistent while letting them flex.\n\nFor brands, the lesson is simple. Invest in the system, not just the screen. Get the foundations right, and every future page comes faster and looks sharper.",
-			Status: "published"},
+			Status:  "published"},
 	}
 	titleCat := map[string]string{
-		"Why Your Agency Needs a Custom CMS": "Technology",
+		"Why Your Agency Needs a Custom CMS":   "Technology",
 		"The Future of Dynamic Design in 2026": "Design",
 	}
 	for i := range samples {
@@ -434,4 +434,3 @@ func (s *Store) seedBlog(ctx context.Context) error {
 	}
 	return nil
 }
-

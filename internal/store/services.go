@@ -13,13 +13,14 @@ type Service struct {
 	Summary   string    `json:"summary" db:"summary"`
 	Body      string    `json:"body" db:"body"`
 	Icon      string    `json:"icon" db:"icon"`
+	Pillar    string    `json:"pillar" db:"pillar"`
 	SortOrder int       `json:"sortOrder" db:"sort_order"`
 	Status    string    `json:"status" db:"status"`
 	CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	UpdatedAt time.Time `json:"updatedAt" db:"updated_at"`
 }
 
-const serviceSelect = `SELECT id, slug, title, summary, body, icon, sort_order, status, created_at, updated_at FROM services`
+const serviceSelect = `SELECT id, slug, title, summary, body, icon, pillar, sort_order, status, created_at, updated_at FROM services`
 
 // ListServices returns services ordered for display. When publishedOnly is set,
 // only published services are returned.
@@ -61,10 +62,10 @@ func (s *Store) CreateService(ctx context.Context, v *Service) error {
 		v.Status = "published"
 	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO services (slug, title, summary, body, icon, sort_order, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO services (slug, title, summary, body, icon, pillar, sort_order, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`,
-		v.Slug, v.Title, v.Summary, v.Body, v.Icon, v.SortOrder, v.Status,
+		v.Slug, v.Title, v.Summary, v.Body, v.Icon, v.Pillar, v.SortOrder, v.Status,
 	).Scan(&v.ID, &v.CreatedAt, &v.UpdatedAt)
 }
 
@@ -84,9 +85,9 @@ func (s *Store) UpdateService(ctx context.Context, v *Service) error {
 	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE services
-		SET slug=$1, title=$2, summary=$3, body=$4, icon=$5, sort_order=$6, status=$7, updated_at=now()
-		WHERE id=$8`,
-		v.Slug, v.Title, v.Summary, v.Body, v.Icon, v.SortOrder, v.Status, v.ID)
+		SET slug=$1, title=$2, summary=$3, body=$4, icon=$5, pillar=$6, sort_order=$7, status=$8, updated_at=now()
+		WHERE id=$9`,
+		v.Slug, v.Title, v.Summary, v.Body, v.Icon, v.Pillar, v.SortOrder, v.Status, v.ID)
 	if err != nil {
 		return err
 	}

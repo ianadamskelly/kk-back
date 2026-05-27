@@ -210,6 +210,10 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("services.manage")).Post("/admin/services", a.createService)
 			r.With(a.requirePermission("services.manage")).Put("/admin/services/{id}", a.updateService)
 			r.With(a.requirePermission("services.manage")).Delete("/admin/services/{id}", a.deleteService)
+			r.With(a.requirePermission("services.view")).Get("/admin/services/{id}/subservices", a.listAdminServiceSubservices)
+			r.With(a.requirePermission("services.manage")).Post("/admin/services/{id}/subservices", a.createServiceSubservice)
+			r.With(a.requirePermission("services.manage")).Put("/admin/services/{id}/subservices/{subserviceId}", a.updateServiceSubservice)
+			r.With(a.requirePermission("services.manage")).Delete("/admin/services/{id}/subservices/{subserviceId}", a.deleteServiceSubservice)
 
 			// Projects.
 			r.With(a.requirePermission("projects.view")).Get("/admin/projects", a.listAdminProjects)
