@@ -13,22 +13,23 @@ import (
 // total_cents = subtotal - discount - credit (what the customer actually
 // owes the payment gateway).
 type Order struct {
-	ID             int64       `json:"id" db:"id"`
-	UserID         *int64      `json:"userId" db:"user_id"`
-	Kind           string      `json:"kind" db:"kind"`
-	CustomerName   string      `json:"customerName" db:"customer_name"`
-	CustomerEmail  string      `json:"customerEmail" db:"customer_email"`
-	CustomerPhone  string      `json:"customerPhone" db:"customer_phone"`
-	Note           string      `json:"note" db:"note"`
-	SubtotalCents  int64       `json:"subtotalCents" db:"subtotal_cents"`
-	DiscountCents  int64       `json:"discountCents" db:"discount_cents"`
-	CreditCents    int64       `json:"creditCents" db:"credit_cents"`
-	CouponID       *int64      `json:"couponId" db:"coupon_id"`
-	CouponCode     string      `json:"couponCode" db:"coupon_code"`
-	TotalCents     int64       `json:"totalCents" db:"total_cents"`
-	Status         string      `json:"status" db:"status"`
-	CreatedAt      time.Time   `json:"createdAt" db:"created_at"`
-	Items          []OrderItem `json:"items" db:"-"`
+	ID              int64       `json:"id" db:"id"`
+	UserID          *int64      `json:"userId" db:"user_id"`
+	Kind            string      `json:"kind" db:"kind"`
+	CustomerName    string      `json:"customerName" db:"customer_name"`
+	CustomerEmail   string      `json:"customerEmail" db:"customer_email"`
+	CustomerPhone   string      `json:"customerPhone" db:"customer_phone"`
+	Note            string      `json:"note" db:"note"`
+	SubtotalCents   int64       `json:"subtotalCents" db:"subtotal_cents"`
+	DiscountCents   int64       `json:"discountCents" db:"discount_cents"`
+	CreditCents     int64       `json:"creditCents" db:"credit_cents"`
+	CouponID        *int64      `json:"couponId" db:"coupon_id"`
+	CouponCode      string      `json:"couponCode" db:"coupon_code"`
+	TotalCents      int64       `json:"totalCents" db:"total_cents"`
+	Status          string      `json:"status" db:"status"`
+	CreatedAt       time.Time   `json:"createdAt" db:"created_at"`
+	AutoCancelledAt *time.Time  `json:"autoCancelledAt" db:"auto_cancelled_at"`
+	Items           []OrderItem `json:"items" db:"-"`
 }
 
 // OrderItem is a single line on an order, with a price snapshot. Either
@@ -43,7 +44,7 @@ type OrderItem struct {
 	Quantity       int    `json:"quantity" db:"quantity"`
 }
 
-const orderSelect = `SELECT id, user_id, kind, customer_name, customer_email, customer_phone, note, subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, status, created_at FROM orders`
+const orderSelect = `SELECT id, user_id, kind, customer_name, customer_email, customer_phone, note, subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, status, created_at, auto_cancelled_at FROM orders`
 const orderItemSelect = `SELECT id, order_id, product_id, course_id, product_name, unit_price_cents, quantity FROM order_items`
 
 // CreateOrder inserts an order and its line items in a single transaction.
@@ -90,9 +91,13 @@ func (s *Store) CreateOrder(ctx context.Context, o *Order, items []OrderItem) er
 }
 
 // ListOrders returns every order with its line items, newest first.
-func (s *Store) ListOrders(ctx context.Context) ([]Order, error) {
+func (s *Store) ListOrders(ctx context.Context, includeAutoCancelled bool) ([]Order, error) {
+	where := ""
+	if !includeAutoCancelled {
+		where = ` WHERE auto_cancelled_at IS NULL`
+	}
 	orders, err := queryRows[Order](ctx, s.pool,
-		orderSelect+` ORDER BY created_at DESC, id DESC`)
+		orderSelect+where+` ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -114,9 +119,13 @@ func (s *Store) ListOrders(ctx context.Context) ([]Order, error) {
 }
 
 // ListUserOrders returns orders placed by the given user, newest first.
-func (s *Store) ListUserOrders(ctx context.Context, userID int64) ([]Order, error) {
+func (s *Store) ListUserOrders(ctx context.Context, userID int64, includeAutoCancelled bool) ([]Order, error) {
+	where := ` WHERE user_id = $1`
+	if !includeAutoCancelled {
+		where += ` AND auto_cancelled_at IS NULL`
+	}
 	orders, err := queryRows[Order](ctx, s.pool,
-		orderSelect+` WHERE user_id = $1 ORDER BY created_at DESC, id DESC`, userID)
+		orderSelect+where+` ORDER BY created_at DESC, id DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +171,12 @@ func (s *Store) GetOrder(ctx context.Context, id int64) (*Order, error) {
 
 // UpdateOrderStatus changes the status of an order.
 func (s *Store) UpdateOrderStatus(ctx context.Context, id int64, status string) error {
+	autoCancelledSQL := ""
+	if status != "cancelled" {
+		autoCancelledSQL = ", auto_cancelled_at = NULL"
+	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE orders SET status = $1 WHERE id = $2`, status, id)
+		`UPDATE orders SET status = $1`+autoCancelledSQL+` WHERE id = $2`, status, id)
 	if err != nil {
 		return err
 	}
@@ -171,6 +184,57 @@ func (s *Store) UpdateOrderStatus(ctx context.Context, id int64, status string) 
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CleanupStaleUnconfirmedOrders cancels stale unpaid pending orders and moves
+// stale paid-but-unconfirmed orders into payment review.
+func (s *Store) CleanupStaleUnconfirmedOrders(ctx context.Context) (cancelled int64, reviewed int64, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	reviewTag, err := tx.Exec(ctx, `
+		UPDATE orders o
+		SET status = 'payment_review'
+		WHERE o.status = 'pending'
+		  AND o.created_at <= now() - interval '24 hours'
+		  AND EXISTS (
+		      SELECT 1 FROM payments p
+		      WHERE p.order_id = o.id AND p.status = 'successful'
+		  )`)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := tx.QueryRow(ctx, `
+		WITH stale AS (
+			UPDATE orders o
+			SET status = 'cancelled', auto_cancelled_at = now()
+			WHERE o.status = 'pending'
+			  AND o.created_at <= now() - interval '24 hours'
+			  AND NOT EXISTS (
+			      SELECT 1 FROM payments p
+			      WHERE p.order_id = o.id AND p.status = 'successful'
+			  )
+			RETURNING o.id
+		),
+		released AS (
+		UPDATE order_discount_reservations r
+		SET status = 'released', released_at = now()
+		FROM stale
+		WHERE r.order_id = stale.id AND r.status = 'held'
+		RETURNING r.order_id
+		)
+		SELECT COUNT(*) FROM stale`).Scan(&cancelled); err != nil {
+		return 0, 0, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, err
+	}
+	return cancelled, reviewTag.RowsAffected(), nil
 }
 
 // DeleteOrder removes an order and its line items.

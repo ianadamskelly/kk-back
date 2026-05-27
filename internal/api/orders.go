@@ -104,7 +104,7 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 // listAccountOrders returns orders placed by the current signed-in user.
 func (a *API) listAccountOrders(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
-	orders, err := a.store.ListUserOrders(r.Context(), uid)
+	orders, err := a.store.ListUserOrders(r.Context(), uid, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -113,7 +113,8 @@ func (a *API) listAccountOrders(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listOrders(w http.ResponseWriter, r *http.Request) {
-	orders, err := a.store.ListOrders(r.Context())
+	includeExpired := strings.EqualFold(r.URL.Query().Get("includeExpired"), "true")
+	orders, err := a.store.ListOrders(r.Context(), includeExpired)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

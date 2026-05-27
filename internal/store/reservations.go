@@ -333,7 +333,7 @@ func confirmOrderTx(ctx context.Context, tx pgx.Tx, orderID int64, allowReacquir
 		return false, false, nil
 	}
 	if providerPaid && o.Status != "pending" {
-		if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'payment_review' WHERE id = $1`, orderID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'payment_review', auto_cancelled_at = NULL WHERE id = $1`, orderID); err != nil {
 			return false, false, err
 		}
 		return false, true, nil
@@ -362,7 +362,7 @@ func confirmOrderTx(ctx context.Context, tx pgx.Tx, orderID int64, allowReacquir
 			return false, false, ErrReservationUnavailable
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'confirmed' WHERE id = $1`, orderID); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'confirmed', auto_cancelled_at = NULL WHERE id = $1`, orderID); err != nil {
 		return false, false, err
 	}
 	return true, false, nil
@@ -373,7 +373,7 @@ func orderForUpdate(ctx context.Context, tx pgx.Tx, id int64) (*Order, error) {
 	err := tx.QueryRow(ctx, orderSelect+` WHERE id = $1 FOR UPDATE`, id).Scan(
 		&o.ID, &o.UserID, &o.Kind, &o.CustomerName, &o.CustomerEmail, &o.CustomerPhone, &o.Note,
 		&o.SubtotalCents, &o.DiscountCents, &o.CreditCents, &o.CouponID, &o.CouponCode,
-		&o.TotalCents, &o.Status, &o.CreatedAt)
+		&o.TotalCents, &o.Status, &o.CreatedAt, &o.AutoCancelledAt)
 	return &o, err
 }
 

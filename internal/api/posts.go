@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -67,12 +69,21 @@ func (a *API) getAdminPost(w http.ResponseWriter, r *http.Request) {
 }
 
 type postInput struct {
-	Title      string `json:"title"`
-	Excerpt    string `json:"excerpt"`
-	Content    string `json:"content"`
-	CoverImage string `json:"coverImage"`
-	Status     string `json:"status"`
-	CategoryID *int64 `json:"categoryId"`
+	Title       string     `json:"title"`
+	Excerpt     string     `json:"excerpt"`
+	Content     string     `json:"content"`
+	CoverImage  string     `json:"coverImage"`
+	Status      string     `json:"status"`
+	ScheduledAt *time.Time `json:"scheduledAt"`
+	CategoryID  *int64     `json:"categoryId"`
+}
+
+func writePostError(w http.ResponseWriter, err error) {
+	if errors.Is(err, store.ErrInvalidPostSchedule) {
+		writeError(w, http.StatusBadRequest, "scheduled posts require a future publish date")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, err.Error())
 }
 
 func (a *API) createPost(w http.ResponseWriter, r *http.Request) {
@@ -85,18 +96,20 @@ func (a *API) createPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
+	in.Status = strings.ToLower(strings.TrimSpace(in.Status))
 	authorID := currentUserID(r)
 	post := &store.Post{
-		Title:      in.Title,
-		Excerpt:    in.Excerpt,
-		Content:    sanitizeHTML(in.Content),
-		CoverImage: in.CoverImage,
-		Status:     in.Status,
-		CategoryID: in.CategoryID,
-		AuthorID:   &authorID,
+		Title:       in.Title,
+		Excerpt:     in.Excerpt,
+		Content:     sanitizeHTML(in.Content),
+		CoverImage:  in.CoverImage,
+		Status:      in.Status,
+		ScheduledAt: in.ScheduledAt,
+		CategoryID:  in.CategoryID,
+		AuthorID:    &authorID,
 	}
 	if err := a.store.CreatePost(r.Context(), post); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writePostError(w, err)
 		return
 	}
 	full, _ := a.store.GetPostByID(r.Context(), post.ID)
@@ -128,10 +141,11 @@ func (a *API) updatePost(w http.ResponseWriter, r *http.Request) {
 	existing.Excerpt = in.Excerpt
 	existing.Content = sanitizeHTML(in.Content)
 	existing.CoverImage = in.CoverImage
-	existing.Status = in.Status
+	existing.Status = strings.ToLower(strings.TrimSpace(in.Status))
+	existing.ScheduledAt = in.ScheduledAt
 	existing.CategoryID = in.CategoryID
 	if err := a.store.UpdatePost(r.Context(), existing); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writePostError(w, err)
 		return
 	}
 	full, _ := a.store.GetPostByID(r.Context(), existing.ID)

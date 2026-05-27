@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
+
+var ErrInvalidPostSchedule = errors.New("invalid post schedule")
 
 // Post is a single Insights / blog article.
 type Post struct {
@@ -24,6 +27,7 @@ type Post struct {
 	CreatedAt    time.Time  `json:"createdAt" db:"created_at"`
 	UpdatedAt    time.Time  `json:"updatedAt" db:"updated_at"`
 	PublishedAt  *time.Time `json:"publishedAt" db:"published_at"`
+	ScheduledAt  *time.Time `json:"scheduledAt" db:"scheduled_at"`
 }
 
 // ListOptions controls filtering and pagination for ListPosts.
@@ -48,7 +52,7 @@ const postSelect = `
 SELECT p.id, p.title, p.slug, p.excerpt, p.content, p.cover_image, p.status,
        p.category_id, COALESCE(c.name, '') AS category_name, COALESCE(c.slug, '') AS category_slug,
        p.author_id, COALESCE(u.name, '') AS author_name,
-       p.created_at, p.updated_at, p.published_at
+       p.created_at, p.updated_at, p.published_at, p.scheduled_at
 FROM posts p
 LEFT JOIN categories c ON c.id = p.category_id
 LEFT JOIN users u ON u.id = p.author_id`
@@ -122,6 +126,32 @@ func (s *Store) GetPostBySlug(ctx context.Context, slug string, publishedOnly bo
 	return queryOne[Post](ctx, s.pool, query, slug)
 }
 
+func normalizePostLifecycle(p *Post, now time.Time) error {
+	p.Status = strings.ToLower(strings.TrimSpace(p.Status))
+	switch p.Status {
+	case "", "draft":
+		p.Status = "draft"
+		p.PublishedAt = nil
+		p.ScheduledAt = nil
+	case "scheduled":
+		if p.ScheduledAt == nil || !p.ScheduledAt.After(now) {
+			return ErrInvalidPostSchedule
+		}
+		scheduledAt := p.ScheduledAt.UTC()
+		p.ScheduledAt = &scheduledAt
+		p.PublishedAt = nil
+	case "published":
+		p.ScheduledAt = nil
+		if p.PublishedAt == nil {
+			publishedAt := now.UTC()
+			p.PublishedAt = &publishedAt
+		}
+	default:
+		return ErrInvalidPostSchedule
+	}
+	return nil
+}
+
 // CreatePost inserts a new post, generating a unique slug.
 func (s *Store) CreatePost(ctx context.Context, p *Post) error {
 	base := p.Slug
@@ -133,25 +163,16 @@ func (s *Store) CreatePost(ctx context.Context, p *Post) error {
 		return err
 	}
 	p.Slug = slug
-	if p.Status != "published" {
-		p.Status = "draft"
-	}
-	var publishedAt *time.Time
-	if p.Status == "published" {
-		now := time.Now().UTC()
-		publishedAt = &now
-	}
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO posts (title, slug, excerpt, content, cover_image, status, category_id, author_id, published_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING id, created_at, updated_at`,
-		p.Title, p.Slug, p.Excerpt, p.Content, p.CoverImage, p.Status, p.CategoryID, p.AuthorID, publishedAt,
-	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
-	if err != nil {
+	if err := normalizePostLifecycle(p, time.Now().UTC()); err != nil {
 		return err
 	}
-	p.PublishedAt = publishedAt
-	return nil
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO posts (title, slug, excerpt, content, cover_image, status, category_id, author_id, published_at, scheduled_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		RETURNING id, created_at, updated_at`,
+		p.Title, p.Slug, p.Excerpt, p.Content, p.CoverImage, p.Status, p.CategoryID, p.AuthorID, p.PublishedAt, p.ScheduledAt,
+	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
+	return err
 }
 
 // UpdatePost saves changes to an existing post. The slug is kept stable.
@@ -165,32 +186,39 @@ func (s *Store) UpdatePost(ctx context.Context, p *Post) error {
 		return err
 	}
 	p.Slug = slug
-	if p.Status != "published" {
-		p.Status = "draft"
-	}
-	var publishedAt *time.Time
-	if p.Status == "published" {
-		if p.PublishedAt != nil {
-			publishedAt = p.PublishedAt
-		} else {
-			now := time.Now().UTC()
-			publishedAt = &now
-		}
+	if err := normalizePostLifecycle(p, time.Now().UTC()); err != nil {
+		return err
 	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE posts
 		SET title=$1, slug=$2, excerpt=$3, content=$4, cover_image=$5,
-		    status=$6, category_id=$7, updated_at=now(), published_at=$8
-		WHERE id=$9`,
-		p.Title, p.Slug, p.Excerpt, p.Content, p.CoverImage, p.Status, p.CategoryID, publishedAt, p.ID)
+		    status=$6, category_id=$7, updated_at=now(), published_at=$8, scheduled_at=$9
+		WHERE id=$10`,
+		p.Title, p.Slug, p.Excerpt, p.Content, p.CoverImage, p.Status, p.CategoryID, p.PublishedAt, p.ScheduledAt, p.ID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	p.PublishedAt = publishedAt
 	return nil
+}
+
+// PublishDueScheduledPosts makes due scheduled posts visible.
+func (s *Store) PublishDueScheduledPosts(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE posts
+		SET status = 'published',
+		    published_at = scheduled_at,
+		    scheduled_at = NULL,
+		    updated_at = now()
+		WHERE status = 'scheduled'
+		  AND scheduled_at IS NOT NULL
+		  AND scheduled_at <= now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // DeletePost removes a post by id.

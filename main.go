@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -44,10 +45,44 @@ func main() {
 		log.Fatalf("could not migrate protected files: %v", err)
 	}
 
+	runBackgroundMaintenance(ctx, st)
+
 	handler := api.NewRouter(cfg, st)
 	addr := ":" + cfg.Port
 	log.Printf("Kuza Kizazi API listening on http://localhost%s", addr)
 	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
+}
+
+func runBackgroundMaintenance(ctx context.Context, st *store.Store) {
+	run := func() {
+		if n, err := st.PublishDueScheduledPosts(ctx); err != nil {
+			log.Printf("scheduled post publish failed: %v", err)
+		} else if n > 0 {
+			log.Printf("published %d scheduled post(s)", n)
+		}
+		cancelled, reviewed, err := st.CleanupStaleUnconfirmedOrders(ctx)
+		if err != nil {
+			log.Printf("stale order cleanup failed: %v", err)
+			return
+		}
+		if cancelled > 0 || reviewed > 0 {
+			log.Printf("stale order cleanup: auto-cancelled=%d payment-review=%d", cancelled, reviewed)
+		}
+	}
+
+	run()
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				run()
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }

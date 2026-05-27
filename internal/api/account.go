@@ -16,7 +16,7 @@ import (
 	"kuzakizazi/internal/store"
 )
 
-func itoa(n int64) string  { return strconv.FormatInt(n, 10) }
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func formatCents(c int64) string {
 	return fmt.Sprintf("KSh %d", c/100)
 }
@@ -119,7 +119,7 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	ctx := r.Context()
 
-	orders, _ := a.store.ListUserOrders(ctx, uid)
+	orders, _ := a.store.ListUserOrders(ctx, uid, false)
 	tickets, _ := a.store.ListUserTickets(ctx, uid)
 	credit, _ := a.store.GetCreditBalance(ctx, uid)
 	courses, _ := a.userOwnedCourses(ctx, uid)
@@ -203,7 +203,7 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 // digital files attached. Used to populate the "My Downloads" tab.
 func (a *API) listMyDownloads(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
-	orders, err := a.store.ListUserOrders(r.Context(), uid)
+	orders, err := a.store.ListUserOrders(r.Context(), uid, false)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -308,7 +308,7 @@ func (a *API) userOwnedCourses(ctx context.Context, uid int64) ([]store.Course, 
 		return a.store.ListCourses(ctx, true)
 	}
 	// Owned-by-purchase: walk the user's confirmed orders for course items.
-	orders, err := a.store.ListUserOrders(ctx, uid)
+	orders, err := a.store.ListUserOrders(ctx, uid, false)
 	if err != nil {
 		return nil, err
 	}
