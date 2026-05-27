@@ -52,7 +52,7 @@ Core:
 | `JWT_SECRET` | dev placeholder — **change in prod** | Signing secret for JWTs. Use a long random string. |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | dev defaults — **change in prod** | Admin user created on first boot. |
 | `UPLOAD_DIR` | `uploads` | Where **public** uploads (cover images, public assets) are written. Served verbatim under `/uploads/*`. Mount a persistent volume here in prod. |
-| `PROTECTED_UPLOAD_DIR` | `uploads/protected` | Where **protected** uploads land (digital download payloads, member library files, course-task attachments). NOT served publicly — reads go through signed tokens at `/api/files/{token}` or `/api/downloads/{token}`. Default lives under `UploadDir` so one volume covers both. |
+| `PROTECTED_UPLOAD_DIR` | `protected_uploads` | Where **protected** uploads land (digital downloads, course resources, member library files, course-task attachments). Must be outside `UPLOAD_DIR`; reads go through signed token endpoints only. Mount a separate persistent volume in prod. |
 | `CORS_ORIGIN` | `http://localhost:3000` | Allowed origin for the frontend. Cannot be `*` since the customer session cookie requires Allow-Credentials. |
 | `COOKIE_DOMAIN` | `""` | Parent domain for the `kk_session` HttpOnly cookie. Set to `.kuzakizazi.com` in prod so the cookie spans the frontend + the api subdomain. Leave blank in dev. |
 | `COOKIE_SECURE` | `false` | Forces the `Secure` flag on the session cookie. Set to `true` in prod (HTTPS) so the cookie is never sent over plaintext. |
@@ -97,17 +97,18 @@ docker run --rm -p 8080:8080 \
   -e JWT_SECRET="$(openssl rand -hex 32)" \
   -e CORS_ORIGIN="https://kuzakizazi.com" \
   -v kk-uploads:/app/uploads \
+  -v kk-protected-uploads:/app/protected_uploads \
   kk-api
 ```
 
-The image runs as a non-root `app` user. Uploads live at `/app/uploads`; mount a volume there in any environment where you want them to survive a redeploy.
+The image runs as a non-root `app` user. Public uploads live at `/app/uploads`; protected payloads live at `/app/protected_uploads`. Mount both paths wherever files must survive redeploys.
 
 ## Deploy on Coolify
 
 1. Provision a **PostgreSQL** resource in Coolify; copy its internal connection string.
 2. Create a new **Application** from this repo, branch `main`, build pack **Dockerfile**.
 3. Set environment variables (at minimum `DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`, `PUBLIC_BASE_URL`, and any payment/SMTP credentials you need). Use Coolify's secret type for the secrets.
-4. Add a **persistent volume**: `/app/uploads` → e.g. `kk-uploads`.
+4. Add two **persistent volumes**: `/app/uploads` → e.g. `kk-uploads`, and `/app/protected_uploads` → e.g. `kk-protected-uploads`.
 5. Assign a domain (e.g. `api.kuzakizazi.com`); Traefik issues TLS.
 6. Deploy. Check logs for `Kuza Kizazi API listening on …` and confirm the seed log line.
 

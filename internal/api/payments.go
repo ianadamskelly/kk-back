@@ -127,7 +127,11 @@ func (a *API) initiateFlutterwaveInline(w http.ResponseWriter, r *http.Request, 
 		Currency:    currency,
 		Status:      "pending",
 	}
-	if err := a.store.CreatePayment(r.Context(), payment); err != nil {
+	if err := a.store.StartPayment(r.Context(), payment); err != nil {
+		if errors.Is(err, store.ErrReservationExpired) || errors.Is(err, store.ErrReservationUnavailable) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -169,7 +173,11 @@ func (a *API) initiateSifalo(w http.ResponseWriter, r *http.Request, order *stor
 		Currency:    "USD",
 		Status:      "pending",
 	}
-	if err := a.store.CreatePayment(r.Context(), payment); err != nil {
+	if err := a.store.StartPayment(r.Context(), payment); err != nil {
+		if errors.Is(err, store.ErrReservationExpired) || errors.Is(err, store.ErrReservationUnavailable) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -184,6 +192,7 @@ func (a *API) initiateSifalo(w http.ResponseWriter, r *http.Request, order *stor
 			payment.RawResponse = resp.Raw
 		}
 		_ = a.store.UpdatePayment(r.Context(), payment)
+		_ = a.store.ReleaseReservation(r.Context(), payment.OrderID)
 		writeError(w, http.StatusBadGateway, "could not start payment: "+err.Error())
 		return
 	}
@@ -271,6 +280,10 @@ func (a *API) flutterwaveWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
+	if payment.Status == "successful" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	_ = a.applyFlutterwaveVerify(r, payment)
 	w.WriteHeader(http.StatusOK)
 }
@@ -293,17 +306,19 @@ func (a *API) applyFlutterwaveVerify(r *http.Request, payment *store.Payment) er
 		payment.ProviderTxID = strconv.FormatInt(resp.Data.ID, 10)
 		payment.VerifiedAt = &now
 		payment.RawResponse = resp.Raw
-		if err := a.store.UpdatePayment(r.Context(), payment); err != nil {
+		newlyConfirmed, _, err := a.store.FinalizeSuccessfulPayment(r.Context(), payment)
+		if err != nil {
 			return err
 		}
-		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
-		a.applyEntitlements(r, payment.OrderID)
-		a.consumeOrderDiscounts(r.Context(), payment.OrderID)
-		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
+		if newlyConfirmed {
+			a.applyEntitlements(r, payment.OrderID)
+			a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
+		}
 	case resp.Data.Status == "failed" || resp.Data.Status == "cancelled":
 		payment.Status = resp.Data.Status
 		payment.RawResponse = resp.Raw
 		_ = a.store.UpdatePayment(r.Context(), payment)
+		_ = a.store.ReleaseReservation(r.Context(), payment.OrderID)
 	default:
 		payment.RawResponse = resp.Raw
 		_ = a.store.UpdatePayment(r.Context(), payment)
@@ -331,6 +346,7 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 			payment.Status = "failed"
 			payment.RawResponse = resp.Raw
 			_ = a.store.UpdatePayment(r.Context(), payment)
+			_ = a.store.ReleaseReservation(r.Context(), payment.OrderID)
 			return fmt.Errorf("sifalo amount mismatch: got %s expected %.2f", resp.Amount, float64(expectedCents)/100)
 		}
 		now := time.Now().UTC()
@@ -338,17 +354,19 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 		payment.ProviderTxID = resp.SID
 		payment.VerifiedAt = &now
 		payment.RawResponse = resp.Raw
-		if err := a.store.UpdatePayment(r.Context(), payment); err != nil {
+		newlyConfirmed, _, err := a.store.FinalizeSuccessfulPayment(r.Context(), payment)
+		if err != nil {
 			return err
 		}
-		_ = a.store.UpdateOrderStatus(r.Context(), payment.OrderID, "confirmed")
-		a.applyEntitlements(r, payment.OrderID)
-		a.consumeOrderDiscounts(r.Context(), payment.OrderID)
-		a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
+		if newlyConfirmed {
+			a.applyEntitlements(r, payment.OrderID)
+			a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
+		}
 	case "failure":
 		payment.Status = "failed"
 		payment.RawResponse = resp.Raw
 		_ = a.store.UpdatePayment(r.Context(), payment)
+		_ = a.store.ReleaseReservation(r.Context(), payment.OrderID)
 	default: // "pending" or unknown
 		payment.RawResponse = resp.Raw
 		_ = a.store.UpdatePayment(r.Context(), payment)

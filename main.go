@@ -16,6 +16,9 @@ import (
 func main() {
 	_ = godotenv.Load()
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	if err := os.MkdirAll(cfg.UploadDir, 0o755); err != nil {
 		log.Fatalf("could not create upload dir: %v", err)
@@ -35,10 +38,11 @@ func main() {
 		log.Fatalf("could not seed database: %v", err)
 	}
 
-	// One-shot relocation of any pre-protected-uploads-dir payloads
-	// still living under /uploads/. Idempotent — runs every boot but
-	// does nothing once everything is already under /files/.
-	api.MigrateLegacyProtectedFiles(ctx, cfg, st)
+	// Reissue legacy protected payload names and move bytes out of any
+	// publicly served or historic nested upload location.
+	if err := api.MigrateLegacyProtectedFiles(ctx, cfg, st); err != nil {
+		log.Fatalf("could not migrate protected files: %v", err)
+	}
 
 	handler := api.NewRouter(cfg, st)
 	addr := ":" + cfg.Port

@@ -1,22 +1,24 @@
 package store
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
-// ListLegacyProtectedFileURLs returns every distinct URL still in
-// the /uploads/ namespace that refers to a non-image payload: digital
-// product downloads, library resources, course-task attachments.
-// Used by the one-shot startup migration that moves these files into
-// the protected dir.
-func (s *Store) ListLegacyProtectedFileURLs(ctx context.Context) ([]string, error) {
+// ListProtectedFileURLs returns every distinct stored internal payload URL
+// that can require relocation or filename reissuance at startup.
+func (s *Store) ListProtectedFileURLs(ctx context.Context) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT url FROM (
-			SELECT url FROM product_downloads        WHERE url LIKE '/uploads/%'
+			SELECT url FROM product_downloads
 			UNION
-			SELECT url FROM library_resources        WHERE url LIKE '/uploads/%'
+			SELECT url FROM library_resources
 			UNION
-			SELECT file_url AS url FROM course_task_submissions WHERE file_url LIKE '/uploads/%'
+			SELECT file_url AS url FROM course_task_submissions
+			UNION
+			SELECT url FROM course_resources
 		) t
-		WHERE url <> ''`)
+		WHERE url LIKE '/uploads/%' OR url LIKE '/files/%'`)
 	if err != nil {
 		return nil, err
 	}
@@ -32,26 +34,34 @@ func (s *Store) ListLegacyProtectedFileURLs(ctx context.Context) ([]string, erro
 	return out, rows.Err()
 }
 
-// RetargetProtectedFileURL rewrites every reference to oldURL across
-// the three tables that hold protected-file pointers, replacing them
-// with newURL. Used by the legacy-files migration after the bytes
-// have been copied to the protected dir.
+// RetargetProtectedFileURL rewrites every protected-file reference to oldURL
+// after its bytes have been copied to a freshly generated protected filename.
 func (s *Store) RetargetProtectedFileURL(ctx context.Context, oldURL, newURL string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+	aliasURL := oldURL
+	if strings.HasPrefix(oldURL, "/files/") {
+		aliasURL = "/uploads/protected/" + strings.TrimPrefix(oldURL, "/files/")
+	} else if strings.HasPrefix(oldURL, "/uploads/protected/") {
+		aliasURL = "/files/" + strings.TrimPrefix(oldURL, "/uploads/protected/")
+	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE product_downloads SET url = $1 WHERE url = $2`, newURL, oldURL); err != nil {
+		`UPDATE product_downloads SET url = $1 WHERE url = $2 OR url = $3`, newURL, oldURL, aliasURL); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE library_resources SET url = $1 WHERE url = $2`, newURL, oldURL); err != nil {
+		`UPDATE library_resources SET url = $1 WHERE url = $2 OR url = $3`, newURL, oldURL, aliasURL); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE course_task_submissions SET file_url = $1 WHERE file_url = $2`, newURL, oldURL); err != nil {
+		`UPDATE course_task_submissions SET file_url = $1 WHERE file_url = $2 OR file_url = $3`, newURL, oldURL, aliasURL); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE course_resources SET url = $1 WHERE url = $2 OR url = $3`, newURL, oldURL, aliasURL); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

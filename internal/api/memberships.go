@@ -31,9 +31,9 @@ func (a *API) getMyMembership(w http.ResponseWriter, r *http.Request) {
 	m, err := a.store.GetMembership(r.Context(), uid)
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status":         "none",
-			"priceUSD":       membershipUSDPrice,
-			"priceKESCents":  a.membershipKESCents(),
+			"status":        "none",
+			"priceUSD":      membershipUSDPrice,
+			"priceKESCents": a.membershipKESCents(),
 		})
 		return
 	}
@@ -42,13 +42,13 @@ func (a *API) getMyMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":            m.Status,
-		"currentPeriodEnd":  m.CurrentPeriodEnd,
-		"startedAt":         m.StartedAt,
-		"cancelledAt":       m.CancelledAt,
-		"isActive":          m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()),
-		"priceUSD":          membershipUSDPrice,
-		"priceKESCents":     a.membershipKESCents(),
+		"status":           m.Status,
+		"currentPeriodEnd": m.CurrentPeriodEnd,
+		"startedAt":        m.StartedAt,
+		"cancelledAt":      m.CancelledAt,
+		"isActive":         m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()),
+		"priceUSD":         membershipUSDPrice,
+		"priceKESCents":    a.membershipKESCents(),
 	})
 }
 
@@ -77,21 +77,15 @@ func (a *API) createMembershipCheckout(w http.ResponseWriter, r *http.Request) {
 		SubtotalCents: subtotal,
 		TotalCents:    subtotal,
 	}
-	if err := a.applyDiscountsAndCredit(r.Context(), order, &uid, in.CouponCode, in.ApplyCreditCents, "memberships"); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	items := []store.OrderItem{{
 		ProductName:    "Kuza Kizazi Membership (1 month)",
 		UnitPriceCents: subtotal,
 		Quantity:       1,
 	}}
-	if err := a.store.CreateOrder(r.Context(), order, items); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := a.store.CreateOrderWithReservation(r.Context(), order, items, in.CouponCode, in.ApplyCreditCents, "memberships"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Coupon + credit are consumed at payment-verify time, not here.
-	// See orders.go for the rationale.
 	writeJSON(w, http.StatusCreated, order)
 }
 
@@ -146,20 +140,15 @@ func (a *API) createCourseCheckout(w http.ResponseWriter, r *http.Request) {
 		SubtotalCents: course.PriceCents,
 		TotalCents:    course.PriceCents,
 	}
-	if err := a.applyDiscountsAndCredit(r.Context(), order, &uid, in.CouponCode, in.ApplyCreditCents, "courses"); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	items := []store.OrderItem{{
 		CourseID:       &cid,
 		ProductName:    course.Title,
 		UnitPriceCents: course.PriceCents,
 		Quantity:       1,
 	}}
-	if err := a.store.CreateOrder(r.Context(), order, items); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+	if err := a.store.CreateOrderWithReservation(r.Context(), order, items, in.CouponCode, in.ApplyCreditCents, "courses"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	// Coupon + credit are consumed at payment-verify time, not here.
 	writeJSON(w, http.StatusCreated, order)
 }

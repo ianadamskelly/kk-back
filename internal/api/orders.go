@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -90,52 +89,16 @@ func (a *API) createOrder(w http.ResponseWriter, r *http.Request) {
 		SubtotalCents: subtotal,
 		TotalCents:    subtotal,
 	}
-	if err := a.applyDiscountsAndCredit(r.Context(), order, uid, in.CouponCode, in.ApplyCreditCents, "shop"); err != nil {
+	if err := a.store.CreateOrderWithReservation(r.Context(), order, items, in.CouponCode, in.ApplyCreditCents, "shop"); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	if err := a.store.CreateOrder(r.Context(), order, items); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// NOTE: recordOrderDiscounts is intentionally NOT called here.
-	// Coupons and store credit are now consumed only after payment
-	// is verified (see payments.go) or an admin marks the order
-	// confirmed (see updateOrder). Otherwise a customer could drain
-	// credit + burn single-use coupons by spamming pending orders.
 
 	// Fire-and-forget "order received" email — SMTP errors are logged
 	// but never block placement.
 	a.sendOrderConfirmationEmailAsync(order)
 
 	writeJSON(w, http.StatusCreated, order)
-}
-
-// applyCreditToOrder returns the credit amount to apply, capped at both
-// the user's balance and the post-discount subtotal.
-func (a *API) applyCreditToOrder(ctx context.Context, userID, requested, maxApplicable int64) (int64, error) {
-	if requested <= 0 {
-		return 0, nil
-	}
-	balance, err := a.store.GetCreditBalance(ctx, userID)
-	if err != nil {
-		return 0, err
-	}
-	if balance <= 0 {
-		return 0, nil
-	}
-	cap := requested
-	if cap > balance {
-		cap = balance
-	}
-	if cap > maxApplicable {
-		cap = maxApplicable
-	}
-	if cap < 0 {
-		cap = 0
-	}
-	return cap, nil
 }
 
 // listAccountOrders returns orders placed by the current signed-in user.
@@ -186,7 +149,7 @@ func (a *API) updateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := parseID(chi.URLParam(r, "id"))
-	err := a.store.UpdateOrderStatus(r.Context(), id, in.Status)
+	existing, err := a.store.GetOrder(r.Context(), id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "order not found")
 		return
@@ -195,19 +158,52 @@ func (a *API) updateOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	// An admin marking an order confirmed should fire the same entitlement
-	// + referral-reward side-effects as a gateway verify, and consume any
-	// coupon redemption / credit debit that was reserved at order create.
-	// This makes off-gateway payments (bank transfer, manual reconciliation)
-	// work end-to-end.
+	if (existing.Status == "confirmed" || existing.Status == "fulfilled") &&
+		in.Status != existing.Status &&
+		!(existing.Status == "confirmed" && in.Status == "fulfilled") {
+		writeError(w, http.StatusConflict, "a confirmed order cannot be returned to an earlier status")
+		return
+	}
+	if existing.Status == "cancelled" && in.Status != "cancelled" {
+		writeError(w, http.StatusConflict, "a cancelled order cannot be reopened")
+		return
+	}
 	if in.Status == "confirmed" {
-		a.applyEntitlements(r, id)
-		a.consumeOrderDiscounts(r.Context(), id)
+		newlyConfirmed, err := a.store.ConfirmOrderManually(r.Context(), id)
+		if errors.Is(err, store.ErrReservationUnavailable) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if newlyConfirmed {
+			a.applyEntitlements(r, id)
+			a.autoFulfilDigitalOrder(r.Context(), id)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "confirmed"})
+		return
+	}
+	if existing.Status == "payment_review" && in.Status != "cancelled" {
+		writeError(w, http.StatusConflict, "a payment under review must be reconciled as confirmed or cancelled")
+		return
+	}
+	if in.Status == "fulfilled" && existing.Status != "confirmed" && existing.Status != "fulfilled" {
+		writeError(w, http.StatusConflict, "confirm the order before marking it fulfilled")
+		return
+	}
+	if err := a.store.UpdateOrderStatus(r.Context(), id, in.Status); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if in.Status == "cancelled" {
+		_ = a.store.ReleaseReservation(r.Context(), id)
 	}
 	// When the admin marks an order fulfilled, send the buyer the
 	// "your order is ready" email — with download links for any
 	// digital items.
-	if in.Status == "fulfilled" {
+	if in.Status == "fulfilled" && existing.Status != "fulfilled" {
 		if order, err := a.store.GetOrder(r.Context(), id); err == nil && order != nil {
 			a.sendOrderFulfilledEmailAsync(r.Context(), order)
 		}

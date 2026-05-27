@@ -30,7 +30,7 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 	// limited so a single host can't sit on a wordlist all night.
 	// loginLimiter is a touch more generous since legitimate users
 	// fat-finger passwords; register stays tight to slow signup abuse.
-	loginLimiter := newIPRateLimiter(20, 10) // 20/min, burst 10
+	loginLimiter := newIPRateLimiter(20, 10)  // 20/min, burst 10
 	registerLimiter := newIPRateLimiter(5, 3) // 5/min, burst 3
 
 	r := chi.NewRouter()
@@ -367,7 +367,12 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		})
 	})
 
-	// Serve uploaded images.
+	// Keep the historical nested protected path dark during deployment
+	// rollouts where an old volume may still contain payloads there.
+	r.Handle("/uploads/protected", http.NotFoundHandler())
+	r.Handle("/uploads/protected/*", http.NotFoundHandler())
+
+	// Serve public uploaded images only.
 	uploads := http.FileServer(http.Dir(cfg.UploadDir))
 	r.Handle("/uploads/*", http.StripPrefix("/uploads/", uploads))
 

@@ -92,84 +92,6 @@ func fmtKES(cents int64) string {
 	return fmt.Sprintf("KSh %d", cents/100)
 }
 
-// applyDiscountsAndCredit mutates the in-flight order to deduct a coupon
-// + store credit. Called by every checkout entry point (shop, course,
-// membership) so the rules apply uniformly. Caller must still persist the
-// order, then call recordOrderDiscounts to write redemption + ledger rows.
-func (a *API) applyDiscountsAndCredit(ctx context.Context, order *store.Order, userID *int64, couponCode string, applyCreditCents int64, scope string) error {
-	if strings.TrimSpace(couponCode) != "" {
-		vc, err := a.validateCouponForOrder(ctx, couponCode, scope, order.SubtotalCents, userID)
-		if err != nil {
-			return err
-		}
-		order.CouponID = &vc.Coupon.ID
-		order.CouponCode = vc.Coupon.Code
-		order.DiscountCents = vc.DiscountCents
-	}
-	if applyCreditCents > 0 && userID != nil {
-		credit, err := a.applyCreditToOrder(ctx, *userID, applyCreditCents,
-			order.SubtotalCents-order.DiscountCents)
-		if err != nil {
-			return err
-		}
-		order.CreditCents = credit
-	}
-	order.TotalCents = order.SubtotalCents - order.DiscountCents - order.CreditCents
-	if order.TotalCents < 0 {
-		order.TotalCents = 0
-	}
-	return nil
-}
-
-// consumeOrderDiscounts is the helper the payment-confirm paths call
-// once they know an order is actually paid. It loads the order so the
-// caller doesn't need to (the gateway-verify hooks only have an id)
-// and then defers to recordOrderDiscounts.
-func (a *API) consumeOrderDiscounts(ctx context.Context, orderID int64) {
-	order, err := a.store.GetOrder(ctx, orderID)
-	if err != nil || order == nil {
-		return
-	}
-	var uid *int64
-	if order.UserID != nil {
-		v := *order.UserID
-		uid = &v
-	}
-	a.recordOrderDiscounts(ctx, order, uid)
-}
-
-// recordOrderDiscounts writes the bookkeeping rows for an order that
-// just transitioned into "paid" — coupon redemption + a negative
-// credit-ledger entry.
-//
-// IMPORTANT: this is only called AFTER payment is confirmed, never at
-// order creation time. Earlier code called this from createOrder,
-// which let a customer drain their credit balance + burn single-use
-// coupons by spamming pending orders.
-//
-// The function is idempotent: RecordCouponRedemption upserts on
-// order_id, and the spend insert is gated on HasOrderSpend so a
-// replayed webhook / repeated admin action doesn't double-debit.
-// Errors are logged-only since the order is already considered paid.
-func (a *API) recordOrderDiscounts(ctx context.Context, order *store.Order, userID *int64) {
-	if order.CouponID != nil {
-		_ = a.store.RecordCouponRedemption(ctx, *order.CouponID, userID, order.ID, order.DiscountCents)
-	}
-	if order.CreditCents > 0 && userID != nil {
-		already, err := a.store.HasOrderSpend(ctx, order.ID)
-		if err != nil || already {
-			return
-		}
-		oid := order.ID
-		_ = a.store.AddCreditTransaction(ctx, &store.CreditTransaction{
-			UserID:         *userID,
-			AmountCents:    -order.CreditCents,
-			Reason:         "order_spend",
-			RelatedOrderID: &oid,
-		})
-	}
-}
-
 // validateCoupon is the public endpoint the checkout page calls to preview
 // the discount before submitting an order.
 func (a *API) validateCoupon(w http.ResponseWriter, r *http.Request) {
@@ -199,13 +121,13 @@ func (a *API) validateCoupon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"code":            res.Coupon.Code,
-		"description":     res.Coupon.Description,
-		"discountType":    res.Coupon.DiscountType,
-		"percentOff":      res.Coupon.PercentOff,
-		"amountOffCents":  res.Coupon.AmountOffCents,
-		"scope":           res.Coupon.Scope,
-		"discountCents":   res.DiscountCents,
+		"code":           res.Coupon.Code,
+		"description":    res.Coupon.Description,
+		"discountType":   res.Coupon.DiscountType,
+		"percentOff":     res.Coupon.PercentOff,
+		"amountOffCents": res.Coupon.AmountOffCents,
+		"scope":          res.Coupon.Scope,
+		"discountCents":  res.DiscountCents,
 	})
 }
 
@@ -227,18 +149,18 @@ func normaliseScope(s string) string {
 // --- Admin CRUD ---
 
 type couponInput struct {
-	Code              string  `json:"code"`
-	Description       string  `json:"description"`
-	DiscountType      string  `json:"discountType"`
-	PercentOff        int     `json:"percentOff"`
-	AmountOffCents    int64   `json:"amountOffCents"`
-	Scope             string  `json:"scope"`
-	MinSubtotalCents  int64   `json:"minSubtotalCents"`
-	MaxUses           *int    `json:"maxUses"`
-	PerUserMaxUses    *int    `json:"perUserMaxUses"`
-	StartsAt          *string `json:"startsAt"`
-	ExpiresAt         *string `json:"expiresAt"`
-	Active            bool    `json:"active"`
+	Code             string  `json:"code"`
+	Description      string  `json:"description"`
+	DiscountType     string  `json:"discountType"`
+	PercentOff       int     `json:"percentOff"`
+	AmountOffCents   int64   `json:"amountOffCents"`
+	Scope            string  `json:"scope"`
+	MinSubtotalCents int64   `json:"minSubtotalCents"`
+	MaxUses          *int    `json:"maxUses"`
+	PerUserMaxUses   *int    `json:"perUserMaxUses"`
+	StartsAt         *string `json:"startsAt"`
+	ExpiresAt        *string `json:"expiresAt"`
+	Active           bool    `json:"active"`
 }
 
 func (in couponInput) toCoupon() (*store.Coupon, error) {

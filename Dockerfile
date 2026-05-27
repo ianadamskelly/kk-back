@@ -14,11 +14,12 @@ RUN apk add --no-cache ca-certificates tzdata curl su-exec \
  && addgroup -S app && adduser -S app -G app
 WORKDIR /app
 COPY --from=builder /out/kkapi /app/kkapi
-RUN mkdir -p /app/uploads && chown -R app:app /app
+RUN mkdir -p /app/uploads /app/protected_uploads && chown -R app:app /app
 ENV PORT=8080 \
-    UPLOAD_DIR=/app/uploads
+    UPLOAD_DIR=/app/uploads \
+    PROTECTED_UPLOAD_DIR=/app/protected_uploads
 EXPOSE 8080
-# Start as root so we can chown the mounted /app/uploads volume
+# Start as root so we can chown the mounted upload volumes
 # (Coolify mounts the volume as root and the image's chown is hidden),
 # then drop to the unprivileged 'app' user via su-exec.
-ENTRYPOINT ["/bin/sh", "-c", "chown -R app:app /app/uploads && exec su-exec app /app/kkapi"]
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /app/uploads /app/protected_uploads && chown -R app:app /app/uploads /app/protected_uploads && exec su-exec app /app/kkapi"]

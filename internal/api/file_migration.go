@@ -2,111 +2,126 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"kuzakizazi/internal/config"
 	"kuzakizazi/internal/store"
 )
 
-// imageExt is the set of file extensions that legitimately live in
-// the public /uploads dir (cover images for products, library entries,
-// posts, etc.). Anything else stored under /uploads/ that's still
-// referenced by a download / library / submission row is a relic
-// from before the protected-uploads split and gets relocated.
-var imageExt = map[string]bool{
-	".jpg":  true,
-	".jpeg": true,
-	".png":  true,
-	".gif":  true,
-	".webp": true,
-	".svg":  true,
-	".avif": true,
-}
-
-// MigrateLegacyProtectedFiles moves payloads still living under
-// UploadDir (with a non-image extension and referenced by a
-// product_downloads / library_resources / course_task_submissions
-// row) into ProtectedUploadDir, then rewrites their URL prefix to
-// "/files/". Idempotent — safe to run on every boot.
-//
-// Sequence per file (chosen so the DB is never inconsistent):
-//
-//	1. Copy old → new (no-op if new already exists).
-//	2. Update DB rows from /uploads/X to /files/X.
-//	3. Delete old (best effort).
-//
-// If the copy fails the DB stays pointing at the still-existing old
-// file. If the DB update fails the new copy is removed.
-func MigrateLegacyProtectedFiles(ctx context.Context, cfg config.Config, st *store.Store) {
-	urls, err := st.ListLegacyProtectedFileURLs(ctx)
+// MigrateLegacyProtectedFiles reissues sensitive files that were once
+// addressable through the public uploads tree. It covers old /uploads/
+// references and /files/ references whose bytes were written under the
+// historic uploads/protected directory. New /files/ records already stored
+// under the configured protected root are left untouched.
+func MigrateLegacyProtectedFiles(ctx context.Context, cfg config.Config, st *store.Store) error {
+	urls, err := st.ListProtectedFileURLs(ctx)
 	if err != nil {
-		log.Printf("legacy protected-file scan failed: %v", err)
-		return
+		return fmt.Errorf("scan protected file references: %w", err)
 	}
-	moved, skipped, failed := 0, 0, 0
-	for _, u := range urls {
-		ext := strings.ToLower(filepath.Ext(u))
-		if imageExt[ext] {
-			skipped++
+	moved := 0
+	retargeted := make(map[string]bool)
+	for _, storedURL := range urls {
+		if retargeted[storedURL] {
 			continue
 		}
-		name := strings.TrimPrefix(u, "/uploads/")
-		if name == "" || strings.Contains(name, "..") {
-			failed++
+		oldPath, needsMigration, err := legacyProtectedPath(cfg, storedURL)
+		if err != nil {
+			return err
+		}
+		if !needsMigration {
 			continue
 		}
-		oldPath := filepath.Join(cfg.UploadDir, name)
-		newPath := filepath.Join(cfg.ProtectedUploadDir, name)
-		newURL := "/files/" + name
-
-		// Case 1: file already at the new location — just retarget DB.
-		if _, err := os.Stat(newPath); err == nil {
-			if err := st.RetargetProtectedFileURL(ctx, u, newURL); err != nil {
-				log.Printf("retarget %s -> %s failed: %v", u, newURL, err)
-				failed++
-				continue
-			}
-			// Old copy is redundant; clean it up.
-			_ = os.Remove(oldPath)
-			moved++
-			continue
+		if _, err := os.Stat(oldPath); err != nil {
+			return fmt.Errorf("protected asset %s is referenced but unavailable at %s: %w", storedURL, oldPath, err)
 		}
-
-		// Case 2: old file gone too — DB row is stale. Still rewrite
-		// the URL so future code paths consistently use /files/.
-		if _, err := os.Stat(oldPath); os.IsNotExist(err) {
-			if err := st.RetargetProtectedFileURL(ctx, u, newURL); err != nil {
-				log.Printf("retarget %s -> %s failed: %v", u, newURL, err)
-				failed++
-				continue
-			}
-			skipped++
-			continue
+		newName, err := reissuedFileName(filepath.Ext(oldPath))
+		if err != nil {
+			return fmt.Errorf("generate replacement name for %s: %w", storedURL, err)
 		}
-
-		// Case 3: ordinary copy → update → delete.
+		newPath := filepath.Join(cfg.ProtectedUploadDir, newName)
+		newURL := "/files/" + newName
 		if err := copyProtectedFile(oldPath, newPath); err != nil {
-			log.Printf("copy %s -> %s failed: %v", oldPath, newPath, err)
-			failed++
-			continue
+			return fmt.Errorf("copy protected asset %s: %w", storedURL, err)
 		}
-		if err := st.RetargetProtectedFileURL(ctx, u, newURL); err != nil {
-			log.Printf("retarget %s -> %s failed: %v", u, newURL, err)
+		if err := st.RetargetProtectedFileURL(ctx, storedURL, newURL); err != nil {
 			_ = os.Remove(newPath)
-			failed++
-			continue
+			return fmt.Errorf("retarget protected asset %s: %w", storedURL, err)
 		}
-		_ = os.Remove(oldPath)
-		log.Printf("legacy file migrated: %s -> %s", u, newURL)
+		for _, alias := range protectedMigrationAliases(storedURL) {
+			retargeted[alias] = true
+		}
+		if err := os.Remove(oldPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove exposed protected asset %s: %w", oldPath, err)
+		}
+		log.Printf("protected asset reissued: %s -> %s", storedURL, newURL)
 		moved++
 	}
-	if moved > 0 || failed > 0 {
-		log.Printf("legacy protected-file migration: moved=%d skipped=%d failed=%d", moved, skipped, failed)
+	if moved > 0 {
+		log.Printf("protected-file migration: reissued=%d", moved)
 	}
+	return nil
+}
+
+func protectedMigrationAliases(storedURL string) []string {
+	switch {
+	case strings.HasPrefix(storedURL, "/files/"):
+		return []string{storedURL, "/uploads/protected/" + strings.TrimPrefix(storedURL, "/files/")}
+	case strings.HasPrefix(storedURL, "/uploads/protected/"):
+		return []string{storedURL, "/files/" + strings.TrimPrefix(storedURL, "/uploads/protected/")}
+	default:
+		return []string{storedURL}
+	}
+}
+
+func legacyProtectedPath(cfg config.Config, storedURL string) (string, bool, error) {
+	switch {
+	case strings.HasPrefix(storedURL, "/uploads/"):
+		name := strings.TrimPrefix(storedURL, "/uploads/")
+		if invalidRelativeFileName(name) {
+			return "", false, fmt.Errorf("invalid legacy upload path %q", storedURL)
+		}
+		return filepath.Join(cfg.UploadDir, name), true, nil
+	case strings.HasPrefix(storedURL, "/files/"):
+		name := strings.TrimPrefix(storedURL, "/files/")
+		if invalidRelativeFileName(name) {
+			return "", false, fmt.Errorf("invalid protected file path %q", storedURL)
+		}
+		oldPath := filepath.Join(cfg.UploadDir, "protected", name)
+		if _, err := os.Stat(oldPath); err == nil {
+			return oldPath, true, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, fmt.Errorf("inspect legacy protected asset %s: %w", oldPath, err)
+		}
+		newPath := filepath.Join(cfg.ProtectedUploadDir, name)
+		if _, err := os.Stat(newPath); err == nil {
+			return "", false, nil
+		} else if !os.IsNotExist(err) {
+			return "", false, fmt.Errorf("inspect protected asset %s: %w", newPath, err)
+		}
+		return "", false, fmt.Errorf("protected asset %s is referenced but unavailable in legacy or configured storage", storedURL)
+	default:
+		return "", false, nil
+	}
+}
+
+func invalidRelativeFileName(name string) bool {
+	return name == "" || strings.Contains(name, "..") || strings.ContainsAny(name, "\x00") || filepath.IsAbs(name)
+}
+
+func reissuedFileName(ext string) (string, error) {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(buf) + strings.ToLower(ext), nil
 }
 
 func copyProtectedFile(src, dst string) error {
@@ -118,7 +133,7 @@ func copyProtectedFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}

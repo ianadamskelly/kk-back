@@ -65,9 +65,28 @@ func (a *API) getPublicCourse(w http.ResponseWriter, r *http.Request) {
 	// so a curious client can't just hit /api/courses/{slug} to bypass the
 	// paywall. Titles + duration stay visible to advertise the curriculum.
 	if locked && !entitled {
+		for i := range item.Resources {
+			item.Resources[i].URL = ""
+		}
 		for i := range item.Lessons {
 			item.Lessons[i].Content = ""
 			item.Lessons[i].VideoURL = ""
+			for j := range item.Lessons[i].Resources {
+				item.Lessons[i].Resources[j].URL = ""
+			}
+		}
+	} else {
+		uid := int64(0)
+		if claims := a.optionalClaims(r); claims != nil {
+			uid = parseClaimsUserID(claims)
+		}
+		for i := range item.Resources {
+			item.Resources[i].URL = a.signedFileURL(uid, item.Resources[i].URL)
+		}
+		for i := range item.Lessons {
+			for j := range item.Lessons[i].Resources {
+				item.Lessons[i].Resources[j].URL = a.signedFileURL(uid, item.Lessons[i].Resources[j].URL)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, struct {

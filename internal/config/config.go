@@ -1,7 +1,9 @@
 package config
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -15,11 +17,11 @@ type Config struct {
 	SeedAdminPassword string
 	UploadDir         string
 	// ProtectedUploadDir holds files that should NEVER be served by
-	// the public file handler — digital download payloads, member
-	// library files, course task attachments. Access is gated by
+	// the public file handler — digital download payloads, course
+	// resources, member library files, course task attachments. Access is gated by
 	// signed tokens minted by /api/files/{token}.
 	ProtectedUploadDir string
-	CORSOrigin        string
+	CORSOrigin         string
 	// CookieDomain scopes the session cookie. In production, set to
 	// the parent domain (e.g. ".kuzakizazi.com") so the cookie is
 	// shared by the frontend + the api subdomain. Leave blank in
@@ -58,16 +60,16 @@ type Config struct {
 // Load reads configuration from the environment, applying sensible defaults.
 func Load() Config {
 	return Config{
-		Port:              env("PORT", "8080"),
-		DatabaseURL:       env("DATABASE_URL", "postgres://postgres@localhost:5432/kuzakizazi?sslmode=disable"),
-		JWTSecret:         env("JWT_SECRET", "dev-only-secret-change-me"),
-		SeedAdminEmail:    env("SEED_ADMIN_EMAIL", "admin@kuzakizazi.com"),
-		SeedAdminPassword: env("SEED_ADMIN_PASSWORD", "admin123"),
-		UploadDir:         env("UPLOAD_DIR", "uploads"),
-		ProtectedUploadDir: env("PROTECTED_UPLOAD_DIR", "uploads/protected"),
-		CORSOrigin:        env("CORS_ORIGIN", "http://localhost:3000"),
-		CookieDomain:      env("COOKIE_DOMAIN", ""),
-		CookieSecure:      envBool("COOKIE_SECURE", false),
+		Port:               env("PORT", "8080"),
+		DatabaseURL:        env("DATABASE_URL", "postgres://postgres@localhost:5432/kuzakizazi?sslmode=disable"),
+		JWTSecret:          env("JWT_SECRET", "dev-only-secret-change-me"),
+		SeedAdminEmail:     env("SEED_ADMIN_EMAIL", "admin@kuzakizazi.com"),
+		SeedAdminPassword:  env("SEED_ADMIN_PASSWORD", "admin123"),
+		UploadDir:          env("UPLOAD_DIR", "uploads"),
+		ProtectedUploadDir: env("PROTECTED_UPLOAD_DIR", "protected_uploads"),
+		CORSOrigin:         env("CORS_ORIGIN", "http://localhost:3000"),
+		CookieDomain:       env("COOKIE_DOMAIN", ""),
+		CookieSecure:       envBool("COOKIE_SECURE", false),
 
 		PublicBaseURL:   env("PUBLIC_BASE_URL", "http://localhost:3000"),
 		APIPublicURL:    env("API_PUBLIC_URL", "http://localhost:8080"),
@@ -97,6 +99,27 @@ func Load() Config {
 				os.Getenv("MAIL_PORT") == "465" ||
 				os.Getenv("SMTP_PORT") == "465"),
 	}
+}
+
+// Validate rejects configurations that would let the public upload file
+// server traverse into protected payloads.
+func (c Config) Validate() error {
+	publicDir, err := filepath.Abs(c.UploadDir)
+	if err != nil {
+		return fmt.Errorf("resolve UPLOAD_DIR: %w", err)
+	}
+	protectedDir, err := filepath.Abs(c.ProtectedUploadDir)
+	if err != nil {
+		return fmt.Errorf("resolve PROTECTED_UPLOAD_DIR: %w", err)
+	}
+	rel, err := filepath.Rel(publicDir, protectedDir)
+	if err != nil {
+		return fmt.Errorf("compare upload directories: %w", err)
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+		return fmt.Errorf("PROTECTED_UPLOAD_DIR must be outside UPLOAD_DIR")
+	}
+	return nil
 }
 
 // firstEnv returns the first non-empty value among the given env vars.
