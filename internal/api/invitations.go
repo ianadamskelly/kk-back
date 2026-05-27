@@ -212,6 +212,9 @@ func (a *API) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
 	}
+	// Set the kk_session cookie so the new admin lands signed-in
+	// without the frontend having to stash the JWT in localStorage.
+	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "user": user})
 }
 

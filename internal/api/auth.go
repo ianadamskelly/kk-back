@@ -129,14 +129,13 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
 	}
-	// Set the HttpOnly cookie for customer sessions so the SPA
-	// doesn't have to keep the JWT in localStorage. Admins keep
-	// reading the token from the response body since the admin app
-	// still relies on Bearer headers (and the admin XSS surface is
-	// smaller anyway). Setting both is harmless.
-	if user.Role == "customer" {
-		a.setSessionCookie(w, token)
-	}
+	// Set the HttpOnly session cookie for every successful login —
+	// customer and admin alike. The body still carries the JWT for
+	// backward compat with already-signed-in admin sessions that
+	// haven't re-authed yet (their localStorage token keeps working
+	// via the Bearer fallback in claimsFromRequest until they log
+	// out and back in).
+	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": user})
 }
 
