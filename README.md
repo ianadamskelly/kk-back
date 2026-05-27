@@ -53,7 +53,9 @@ Core:
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | dev defaults — **change in prod** | Admin user created on first boot. |
 | `UPLOAD_DIR` | `uploads` | Where **public** uploads (cover images, public assets) are written. Served verbatim under `/uploads/*`. Mount a persistent volume here in prod. |
 | `PROTECTED_UPLOAD_DIR` | `uploads/protected` | Where **protected** uploads land (digital download payloads, member library files, course-task attachments). NOT served publicly — reads go through signed tokens at `/api/files/{token}` or `/api/downloads/{token}`. Default lives under `UploadDir` so one volume covers both. |
-| `CORS_ORIGIN` | `http://localhost:3000` | Allowed origin for the frontend. |
+| `CORS_ORIGIN` | `http://localhost:3000` | Allowed origin for the frontend. Cannot be `*` since the customer session cookie requires Allow-Credentials. |
+| `COOKIE_DOMAIN` | `""` | Parent domain for the `kk_session` HttpOnly cookie. Set to `.kuzakizazi.com` in prod so the cookie spans the frontend + the api subdomain. Leave blank in dev. |
+| `COOKIE_SECURE` | `false` | Forces the `Secure` flag on the session cookie. Set to `true` in prod (HTTPS) so the cookie is never sent over plaintext. |
 | `PUBLIC_BASE_URL` | `http://localhost:3000` | Public **site** URL (frontend). Used in emails and payment redirects. |
 | `API_PUBLIC_URL` | `http://localhost:8080` | Public **API** URL (this backend). Used to render absolute download links in order emails. |
 | `PAYMENT_CURRENCY` | `KES` | Default checkout currency. |

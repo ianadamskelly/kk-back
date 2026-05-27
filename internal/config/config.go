@@ -20,6 +20,14 @@ type Config struct {
 	// signed tokens minted by /api/files/{token}.
 	ProtectedUploadDir string
 	CORSOrigin        string
+	// CookieDomain scopes the session cookie. In production, set to
+	// the parent domain (e.g. ".kuzakizazi.com") so the cookie is
+	// shared by the frontend + the api subdomain. Leave blank in
+	// dev so the browser scopes it to localhost.
+	CookieDomain string
+	// CookieSecure forces the Secure flag on session cookies. Set to
+	// false only for HTTP dev. Defaults true in production.
+	CookieSecure bool
 
 	PublicBaseURL   string // frontend, e.g. https://kuzakizazi.com
 	APIPublicURL    string // backend, e.g. https://api.kuzakizazi.com — used in emails for download links
@@ -58,6 +66,8 @@ func Load() Config {
 		UploadDir:         env("UPLOAD_DIR", "uploads"),
 		ProtectedUploadDir: env("PROTECTED_UPLOAD_DIR", "uploads/protected"),
 		CORSOrigin:        env("CORS_ORIGIN", "http://localhost:3000"),
+		CookieDomain:      env("COOKIE_DOMAIN", ""),
+		CookieSecure:      envBool("COOKIE_SECURE", false),
 
 		PublicBaseURL:   env("PUBLIC_BASE_URL", "http://localhost:3000"),
 		APIPublicURL:    env("API_PUBLIC_URL", "http://localhost:8080"),

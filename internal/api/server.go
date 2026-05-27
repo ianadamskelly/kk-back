@@ -95,6 +95,9 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Post("/admin/login", a.login) // legacy alias used by the admin app
 		r.Post("/auth/login", a.login)
 		r.Post("/auth/register", a.register)
+		// Logout clears the kk_session HttpOnly cookie. Public so a
+		// stale-cookie caller can always sign themselves out.
+		r.Post("/auth/logout", a.logout)
 
 		// --- Account endpoints (any signed-in user) ---
 		r.Group(func(r chi.Router) {

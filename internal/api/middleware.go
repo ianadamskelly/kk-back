@@ -25,6 +25,12 @@ func corsMiddleware(origin string) func(http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.Header().Set("Access-Control-Max-Age", "300")
+			// Credentials must be allowed so the customer session
+			// cookie rides along on cross-origin (frontend → api
+			// subdomain) fetches. Browsers refuse credentials when
+			// Allow-Origin is "*", so CORS_ORIGIN must always be set
+			// to the specific frontend origin.
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Add("Vary", "Origin")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)

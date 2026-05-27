@@ -23,6 +23,62 @@ const (
 	permsKey
 )
 
+// sessionCookieName is the HttpOnly cookie that carries the customer
+// JWT. Admin sessions still use the Authorization header (no rich-text
+// rendering risk and the admin tree is small). Customers used to
+// keep this token in localStorage, which XSS could read; the cookie
+// is HttpOnly so JS never sees it.
+const sessionCookieName = "kk_session"
+
+// setSessionCookie writes a fresh HttpOnly session cookie carrying
+// the JWT. Same TTL as the token. Domain comes from config so it can
+// span subdomains in prod (".kuzakizazi.com") and stay omitted in
+// dev (browser scopes to localhost).
+func (a *API) setSessionCookie(w http.ResponseWriter, token string) {
+	c := &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(24 * time.Hour / time.Second),
+		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
+		// Lax lets the cookie ride along on top-level navigations
+		// (so SSR pages can render with the user's data) but still
+		// blocks cross-site POSTs — the standard SPA CSRF posture.
+		SameSite: http.SameSiteLaxMode,
+	}
+	if a.cfg.CookieDomain != "" {
+		c.Domain = a.cfg.CookieDomain
+	}
+	http.SetCookie(w, c)
+}
+
+// clearSessionCookie deletes the cookie by writing one with MaxAge<0.
+// Mirrors setSessionCookie's attributes so the browser actually
+// matches it for deletion.
+func (a *API) clearSessionCookie(w http.ResponseWriter) {
+	c := &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   a.cfg.CookieSecure,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if a.cfg.CookieDomain != "" {
+		c.Domain = a.cfg.CookieDomain
+	}
+	http.SetCookie(w, c)
+}
+
+// logout clears the session cookie. Idempotent — safe to call
+// without a session.
+func (a *API) logout(w http.ResponseWriter, r *http.Request) {
+	a.clearSessionCookie(w)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // tokenClaims is the JWT payload: the user id (Subject) plus their role.
 type tokenClaims struct {
 	Role string `json:"role"`
@@ -73,30 +129,67 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
 	}
+	// Set the HttpOnly cookie for customer sessions so the SPA
+	// doesn't have to keep the JWT in localStorage. Admins keep
+	// reading the token from the response body since the admin app
+	// still relies on Bearer headers (and the admin XSS surface is
+	// smaller anyway). Setting both is harmless.
+	if user.Role == "customer" {
+		a.setSessionCookie(w, token)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": user})
 }
 
-// requireAuth rejects requests without a valid bearer token and stashes the
-// decoded claims in the request context.
+// parseClaims tries to verify a raw JWT string. Returns the decoded
+// claims + true on success; nil + false on any failure (empty input,
+// malformed token, wrong signature, expired). Pure helper so the
+// caller can try multiple credential sources without duplication.
+func (a *API) parseClaims(raw string) (*tokenClaims, bool) {
+	if raw == "" {
+		return nil, false
+	}
+	var claims tokenClaims
+	tok, err := jwt.ParseWithClaims(raw, &claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(a.cfg.JWTSecret), nil
+	})
+	if err != nil || !tok.Valid {
+		return nil, false
+	}
+	return &claims, true
+}
+
+// claimsFromRequest tries the Authorization: Bearer header first,
+// then the kk_session cookie. Either may be present (admin still
+// sends headers, customers ride the cookie); a stale / empty header
+// transparently falls through to the cookie so the frontend doesn't
+// have to coordinate which credential to send.
+func (a *API) claimsFromRequest(r *http.Request) *tokenClaims {
+	if parts := strings.SplitN(r.Header.Get("Authorization"), " ", 2); len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		if claims, ok := a.parseClaims(parts[1]); ok {
+			return claims
+		}
+	}
+	if c, err := r.Cookie(sessionCookieName); err == nil {
+		if claims, ok := a.parseClaims(c.Value); ok {
+			return claims
+		}
+	}
+	return nil
+}
+
+// requireAuth rejects requests without a valid credential and stashes
+// the decoded claims in the request context.
 func (a *API) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			writeError(w, http.StatusUnauthorized, "missing or malformed authorization header")
+		claims := a.claimsFromRequest(r)
+		if claims == nil {
+			writeError(w, http.StatusUnauthorized, "missing or invalid credentials")
 			return
 		}
-		var claims tokenClaims
-		token, err := jwt.ParseWithClaims(parts[1], &claims, func(t *jwt.Token) (any, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
-			}
-			return []byte(a.cfg.JWTSecret), nil
-		})
-		if err != nil || !token.Valid {
-			writeError(w, http.StatusUnauthorized, "invalid or expired token")
-			return
-		}
-		ctx := context.WithValue(r.Context(), claimsKey, &claims)
+		ctx := context.WithValue(r.Context(), claimsKey, claims)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -323,6 +416,8 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "could not issue token")
 		return
 	}
+	// Register is customer-only; always set the HttpOnly session cookie.
+	a.setSessionCookie(w, token)
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "user": user})
 }
 
@@ -335,23 +430,9 @@ func parseClaimsUserID(c *tokenClaims) int64 {
 	return id
 }
 
-// optionalClaims returns the JWT claims when a valid bearer token is present,
-// or nil when there is no token or the token is invalid. Used on public
-// endpoints that behave slightly differently for signed-in users.
+// optionalClaims returns the JWT claims when a valid credential is
+// present, or nil otherwise. Used on public endpoints that behave
+// slightly differently for signed-in users.
 func (a *API) optionalClaims(r *http.Request) *tokenClaims {
-	parts := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return nil
-	}
-	var claims tokenClaims
-	token, err := jwt.ParseWithClaims(parts[1], &claims, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, jwt.ErrSignatureInvalid
-		}
-		return []byte(a.cfg.JWTSecret), nil
-	})
-	if err != nil || !token.Valid {
-		return nil
-	}
-	return &claims
+	return a.claimsFromRequest(r)
 }
