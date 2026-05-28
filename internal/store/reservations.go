@@ -97,11 +97,11 @@ func createOrderTx(ctx context.Context, tx pgx.Tx, o *Order, items []OrderItem) 
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO orders (user_id, kind, customer_name, customer_email, customer_phone, note,
-			subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending')
+			subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, membership_plan, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending')
 		RETURNING id, kind, status, created_at`,
 		o.UserID, kind, o.CustomerName, o.CustomerEmail, o.CustomerPhone, o.Note,
-		o.SubtotalCents, o.DiscountCents, o.CreditCents, o.CouponID, o.CouponCode, o.TotalCents,
+		o.SubtotalCents, o.DiscountCents, o.CreditCents, o.CouponID, o.CouponCode, o.TotalCents, o.MembershipPlan,
 	).Scan(&o.ID, &o.Kind, &o.Status, &o.CreatedAt); err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func orderForUpdate(ctx context.Context, tx pgx.Tx, id int64) (*Order, error) {
 	err := tx.QueryRow(ctx, orderSelect+` WHERE id = $1 FOR UPDATE`, id).Scan(
 		&o.ID, &o.UserID, &o.Kind, &o.CustomerName, &o.CustomerEmail, &o.CustomerPhone, &o.Note,
 		&o.SubtotalCents, &o.DiscountCents, &o.CreditCents, &o.CouponID, &o.CouponCode,
-		&o.TotalCents, &o.Status, &o.CreatedAt, &o.AutoCancelledAt)
+		&o.TotalCents, &o.MembershipPlan, &o.Status, &o.CreatedAt, &o.AutoCancelledAt)
 	return &o, err
 }
 

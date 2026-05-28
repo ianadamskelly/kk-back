@@ -70,7 +70,7 @@ func (s *Store) HasUserEnrolledInCourse(ctx context.Context, userID, courseID in
 	if bought {
 		return true, nil
 	}
-	// Active membership unlocks the whole catalogue.
+	// Only a full active membership unlocks the whole course catalogue.
 	var member bool
 	if err := s.pool.QueryRow(ctx, `
 		SELECT EXISTS (
@@ -78,7 +78,8 @@ func (s *Store) HasUserEnrolledInCourse(ctx context.Context, userID, courseID in
 			FROM memberships
 			WHERE user_id    = $1
 			  AND status     = 'active'
-			  AND (ends_at IS NULL OR ends_at > now())
+			  AND plan       = 'full'
+			  AND current_period_end > now()
 		)`, userID).Scan(&member); err != nil {
 		return false, err
 	}
@@ -252,4 +253,3 @@ func (s *Store) AdminDeleteReview(ctx context.Context, reviewID int64) error {
 	}
 	return nil
 }
-

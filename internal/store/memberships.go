@@ -9,17 +9,18 @@ import (
 // Membership is one row per user with a current_period_end. A user is
 // "active" when status='active' AND current_period_end > now().
 type Membership struct {
-	ID                int64      `json:"id" db:"id"`
-	UserID            int64      `json:"userId" db:"user_id"`
-	Status            string     `json:"status" db:"status"`
-	StartedAt         time.Time  `json:"startedAt" db:"started_at"`
-	CurrentPeriodEnd  time.Time  `json:"currentPeriodEnd" db:"current_period_end"`
-	CancelledAt       *time.Time `json:"cancelledAt" db:"cancelled_at"`
-	CreatedAt         time.Time  `json:"createdAt" db:"created_at"`
-	UpdatedAt         time.Time  `json:"updatedAt" db:"updated_at"`
+	ID               int64      `json:"id" db:"id"`
+	UserID           int64      `json:"userId" db:"user_id"`
+	Plan             string     `json:"plan" db:"plan"`
+	Status           string     `json:"status" db:"status"`
+	StartedAt        time.Time  `json:"startedAt" db:"started_at"`
+	CurrentPeriodEnd time.Time  `json:"currentPeriodEnd" db:"current_period_end"`
+	CancelledAt      *time.Time `json:"cancelledAt" db:"cancelled_at"`
+	CreatedAt        time.Time  `json:"createdAt" db:"created_at"`
+	UpdatedAt        time.Time  `json:"updatedAt" db:"updated_at"`
 }
 
-const membershipSelect = `SELECT id, user_id, status, started_at, current_period_end, cancelled_at, created_at, updated_at FROM memberships`
+const membershipSelect = `SELECT id, user_id, plan, status, started_at, current_period_end, cancelled_at, created_at, updated_at FROM memberships`
 
 // GetMembership returns the membership row for the given user, or
 // ErrNotFound if they have never subscribed.
@@ -31,18 +32,28 @@ func (s *Store) GetMembership(ctx context.Context, userID int64) (*Membership, e
 // ExtendMembership upserts the user's membership, pushing current_period_end
 // forward by `duration` from max(now, current_period_end). Called from the
 // payment-verify flow after a successful membership payment.
-func (s *Store) ExtendMembership(ctx context.Context, userID int64, duration time.Duration) (*Membership, error) {
+func (s *Store) ExtendMembership(ctx context.Context, userID int64, duration time.Duration, plan string) (*Membership, error) {
+	if plan != "library" {
+		plan = "full"
+	}
 	row, err := queryOne[Membership](ctx, s.pool, `
-		INSERT INTO memberships (user_id, status, started_at, current_period_end)
-		VALUES ($1, 'active', now(), now() + ($2 || ' seconds')::interval)
+		INSERT INTO memberships (user_id, plan, status, started_at, current_period_end)
+		VALUES ($1, $3, 'active', now(), now() + ($2 || ' seconds')::interval)
 		ON CONFLICT (user_id) DO UPDATE SET
+			plan = CASE
+				WHEN memberships.status = 'active'
+				  AND memberships.current_period_end > now()
+				  AND memberships.plan = 'full' THEN 'full'
+				WHEN EXCLUDED.plan = 'full' THEN 'full'
+				ELSE EXCLUDED.plan
+			END,
 			status = 'active',
 			current_period_end = GREATEST(memberships.current_period_end, now())
 				+ ($2 || ' seconds')::interval,
 			cancelled_at = NULL,
 			updated_at = now()
 		RETURNING `+stripSelectPrefix(membershipSelect),
-		userID, int64(duration.Seconds()),
+		userID, int64(duration.Seconds()), plan,
 	)
 	return row, err
 }
@@ -75,7 +86,7 @@ type MembershipListItem struct {
 // payment total (sum of successful membership orders).
 func (s *Store) ListMemberships(ctx context.Context) ([]MembershipListItem, error) {
 	return queryRows[MembershipListItem](ctx, s.pool, `
-		SELECT m.id, m.user_id, m.status, m.started_at, m.current_period_end,
+		SELECT m.id, m.user_id, m.plan, m.status, m.started_at, m.current_period_end,
 		       m.cancelled_at, m.created_at, m.updated_at,
 		       u.email AS user_email, u.name AS user_name,
 		       COALESCE(SUM(CASE WHEN o.status = 'confirmed' THEN o.total_cents ELSE 0 END), 0)
@@ -99,6 +110,24 @@ func (s *Store) IsActiveMember(ctx context.Context, userID int64) (bool, error) 
 		SELECT EXISTS (
 			SELECT 1 FROM memberships
 			WHERE user_id = $1 AND status = 'active' AND current_period_end > now()
+		)`, userID).Scan(&ok)
+	return ok, err
+}
+
+// IsActiveCourseMember returns true only for active full memberships. Library
+// memberships unlock protected library resources but do not grant course access.
+func (s *Store) IsActiveCourseMember(ctx context.Context, userID int64) (bool, error) {
+	if userID == 0 {
+		return false, nil
+	}
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM memberships
+			WHERE user_id = $1
+			  AND status = 'active'
+			  AND plan = 'full'
+			  AND current_period_end > now()
 		)`, userID).Scan(&ok)
 	return ok, err
 }

@@ -26,6 +26,7 @@ type Order struct {
 	CouponID        *int64      `json:"couponId" db:"coupon_id"`
 	CouponCode      string      `json:"couponCode" db:"coupon_code"`
 	TotalCents      int64       `json:"totalCents" db:"total_cents"`
+	MembershipPlan  string      `json:"membershipPlan" db:"membership_plan"`
 	Status          string      `json:"status" db:"status"`
 	CreatedAt       time.Time   `json:"createdAt" db:"created_at"`
 	AutoCancelledAt *time.Time  `json:"autoCancelledAt" db:"auto_cancelled_at"`
@@ -44,7 +45,7 @@ type OrderItem struct {
 	Quantity       int    `json:"quantity" db:"quantity"`
 }
 
-const orderSelect = `SELECT id, user_id, kind, customer_name, customer_email, customer_phone, note, subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, status, created_at, auto_cancelled_at FROM orders`
+const orderSelect = `SELECT id, user_id, kind, customer_name, customer_email, customer_phone, note, subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, membership_plan, status, created_at, auto_cancelled_at FROM orders`
 const orderItemSelect = `SELECT id, order_id, product_id, course_id, product_name, unit_price_cents, quantity FROM order_items`
 
 // CreateOrder inserts an order and its line items in a single transaction.
@@ -66,11 +67,11 @@ func (s *Store) CreateOrder(ctx context.Context, o *Order, items []OrderItem) er
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO orders (user_id, kind, customer_name, customer_email, customer_phone, note,
-			subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending')
+			subtotal_cents, discount_cents, credit_cents, coupon_id, coupon_code, total_cents, membership_plan, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending')
 		RETURNING id, kind, status, created_at`,
 		o.UserID, kind, o.CustomerName, o.CustomerEmail, o.CustomerPhone, o.Note,
-		o.SubtotalCents, o.DiscountCents, o.CreditCents, o.CouponID, o.CouponCode, o.TotalCents,
+		o.SubtotalCents, o.DiscountCents, o.CreditCents, o.CouponID, o.CouponCode, o.TotalCents, o.MembershipPlan,
 	).Scan(&o.ID, &o.Kind, &o.Status, &o.CreatedAt); err != nil {
 		return err
 	}

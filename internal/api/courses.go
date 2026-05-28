@@ -115,7 +115,7 @@ func (a *API) courseEntitlement(r *http.Request, c *store.Course) (entitled, loc
 	if claims.Role == "admin" {
 		return true, true
 	}
-	if active, _ := a.store.IsActiveMember(r.Context(), uid); active {
+	if active, _ := a.store.IsActiveCourseMember(r.Context(), uid); active {
 		return true, true
 	}
 	if owned, _ := a.store.UserOwnsCourse(r.Context(), uid, c.ID); owned {

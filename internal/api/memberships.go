@@ -12,15 +12,63 @@ import (
 	"kuzakizazi/internal/store"
 )
 
-// membershipUSDPrice is the published membership price in USD. KES totals
-// are derived from this using the configured KES_PER_USD rate so they stay
-// in sync with the rest of the site's KES-denominated pricing.
-const membershipUSDPrice = 10.00
+type membershipPlan struct {
+	Key              string  `json:"key"`
+	Name             string  `json:"name"`
+	Description      string  `json:"description"`
+	PriceUSD         float64 `json:"priceUSD"`
+	PriceKESCents    int64   `json:"priceKESCents"`
+	IncludesCourses  bool    `json:"includesCourses"`
+	IncludesLibrary  bool    `json:"includesLibrary"`
+	OrderProductName string  `json:"-"`
+}
 
-// membershipKESCents converts the USD-denominated membership price into KES
+var membershipPlanCatalog = []membershipPlan{
+	{
+		Key:              "full",
+		Name:             "Full membership",
+		Description:      "Courses plus the members-only resource library.",
+		PriceUSD:         10.00,
+		IncludesCourses:  true,
+		IncludesLibrary:  true,
+		OrderProductName: "Kuza Kizazi Full Membership (1 month)",
+	},
+	{
+		Key:              "library",
+		Name:             "Library membership",
+		Description:      "Resource library access only. Courses are not included.",
+		PriceUSD:         1.90,
+		IncludesCourses:  false,
+		IncludesLibrary:  true,
+		OrderProductName: "Kuza Kizazi Library Membership (1 month)",
+	},
+}
+
+func (a *API) membershipPlans() []membershipPlan {
+	plans := make([]membershipPlan, len(membershipPlanCatalog))
+	copy(plans, membershipPlanCatalog)
+	for i := range plans {
+		plans[i].PriceKESCents = a.membershipKESCents(plans[i].PriceUSD)
+	}
+	return plans
+}
+
+func (a *API) membershipPlan(key string) (membershipPlan, bool) {
+	if key == "" {
+		key = "full"
+	}
+	for _, p := range a.membershipPlans() {
+		if p.Key == key {
+			return p, true
+		}
+	}
+	return membershipPlan{}, false
+}
+
+// membershipKESCents converts a USD-denominated membership price into KES
 // cents using the configured FX rate.
-func (a *API) membershipKESCents() int64 {
-	return int64(math.Round(membershipUSDPrice * a.cfg.KESPerUSD * 100))
+func (a *API) membershipKESCents(priceUSD float64) int64 {
+	return int64(math.Round(priceUSD * a.cfg.KESPerUSD * 100))
 }
 
 // getMyMembership returns the signed-in user's membership state. Always 200
@@ -30,10 +78,13 @@ func (a *API) getMyMembership(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	m, err := a.store.GetMembership(r.Context(), uid)
 	if errors.Is(err, store.ErrNotFound) {
+		plan, _ := a.membershipPlan("full")
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":        "none",
-			"priceUSD":      membershipUSDPrice,
-			"priceKESCents": a.membershipKESCents(),
+			"plan":          "",
+			"plans":         a.membershipPlans(),
+			"priceUSD":      plan.PriceUSD,
+			"priceKESCents": plan.PriceKESCents,
 		})
 		return
 	}
@@ -41,14 +92,22 @@ func (a *API) getMyMembership(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	plan, ok := a.membershipPlan(m.Plan)
+	if !ok {
+		plan, _ = a.membershipPlan("full")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":           m.Status,
+		"plan":             m.Plan,
+		"plans":            a.membershipPlans(),
 		"currentPeriodEnd": m.CurrentPeriodEnd,
 		"startedAt":        m.StartedAt,
 		"cancelledAt":      m.CancelledAt,
 		"isActive":         m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()),
-		"priceUSD":         membershipUSDPrice,
-		"priceKESCents":    a.membershipKESCents(),
+		"hasCourseAccess":  m.Status == "active" && m.Plan == "full" && m.CurrentPeriodEnd.After(time.Now().UTC()),
+		"hasLibraryAccess": m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()),
+		"priceUSD":         plan.PriceUSD,
+		"priceKESCents":    plan.PriceKESCents,
 	})
 }
 
@@ -59,6 +118,7 @@ func (a *API) createMembershipCheckout(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		CouponCode       string `json:"couponCode"`
 		ApplyCreditCents int64  `json:"applyCreditCents"`
+		Plan             string `json:"plan"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&in) // body is optional
 	uid := currentUserID(r)
@@ -68,17 +128,32 @@ func (a *API) createMembershipCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subtotal := a.membershipKESCents()
+	plan, ok := a.membershipPlan(in.Plan)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "unknown membership plan")
+		return
+	}
+	if plan.Key == "library" {
+		if existing, err := a.store.GetMembership(r.Context(), uid); err == nil &&
+			existing.Status == "active" &&
+			existing.Plan == "full" &&
+			existing.CurrentPeriodEnd.After(time.Now().UTC()) {
+			writeError(w, http.StatusConflict, "your full membership already includes the library-only plan")
+			return
+		}
+	}
+	subtotal := plan.PriceKESCents
 	order := &store.Order{
-		UserID:        &uid,
-		Kind:          "membership",
-		CustomerName:  user.Name,
-		CustomerEmail: user.Email,
-		SubtotalCents: subtotal,
-		TotalCents:    subtotal,
+		UserID:         &uid,
+		Kind:           "membership",
+		CustomerName:   user.Name,
+		CustomerEmail:  user.Email,
+		SubtotalCents:  subtotal,
+		TotalCents:     subtotal,
+		MembershipPlan: plan.Key,
 	}
 	items := []store.OrderItem{{
-		ProductName:    "Kuza Kizazi Membership (1 month)",
+		ProductName:    plan.OrderProductName,
 		UnitPriceCents: subtotal,
 		Quantity:       1,
 	}}
@@ -126,7 +201,7 @@ func (a *API) createCourseCheckout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "you already own this course")
 		return
 	}
-	if active, _ := a.store.IsActiveMember(r.Context(), uid); active {
+	if active, _ := a.store.IsActiveCourseMember(r.Context(), uid); active {
 		writeError(w, http.StatusConflict, "your membership already includes this course")
 		return
 	}

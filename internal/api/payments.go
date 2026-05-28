@@ -387,7 +387,11 @@ func (a *API) applyEntitlements(r *http.Request, orderID int64) {
 		return
 	}
 	if order.Kind == "membership" && order.UserID != nil {
-		_, _ = a.store.ExtendMembership(r.Context(), *order.UserID, 30*24*time.Hour)
+		plan := order.MembershipPlan
+		if plan == "" {
+			plan = "full"
+		}
+		_, _ = a.store.ExtendMembership(r.Context(), *order.UserID, 30*24*time.Hour, plan)
 	}
 	a.maybeGrantReferralReward(r, order)
 	a.tagSubscriberFromOrder(r, order)

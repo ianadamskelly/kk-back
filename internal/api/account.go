@@ -128,8 +128,10 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 	status := "guest"
 	active := false
 	var periodEnd *time.Time
+	membershipPlan := ""
 	if m, err := a.store.GetMembership(ctx, uid); err == nil && m != nil {
 		periodEnd = &m.CurrentPeriodEnd
+		membershipPlan = m.Plan
 		if m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()) {
 			status = "member"
 			active = true
@@ -189,6 +191,7 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 			"creditCents":      credit,
 			"membershipStatus": status,
 			"membershipActive": active,
+			"membershipPlan":   membershipPlan,
 			"periodEnd":        periodEnd,
 		},
 		"continueLearning": pickContinueLearning(courses),
@@ -304,7 +307,7 @@ func (a *API) listMyCourses(w http.ResponseWriter, r *http.Request) {
 // userOwnedCourses centralises the "what courses can this user see?"
 // logic for both the dashboard stats and the /account/courses list.
 func (a *API) userOwnedCourses(ctx context.Context, uid int64) ([]store.Course, error) {
-	if active, _ := a.store.IsActiveMember(ctx, uid); active {
+	if active, _ := a.store.IsActiveCourseMember(ctx, uid); active {
 		return a.store.ListCourses(ctx, true)
 	}
 	// Owned-by-purchase: walk the user's confirmed orders for course items.
