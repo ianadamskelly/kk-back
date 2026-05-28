@@ -41,12 +41,15 @@ func (a *API) sifaloBasicAuth() string {
 
 // sifaloInitiate authenticates a Checkout session and returns a key+token pair
 // that the frontend can use to build the hosted-checkout URL.
-func (a *API) sifaloInitiate(ctx context.Context, amountUSD float64, returnURL string) (*sifaloAuthResp, error) {
+func (a *API) sifaloInitiate(ctx context.Context, amountUSD float64, returnURL, orderID string) (*sifaloAuthResp, error) {
 	body := map[string]any{
 		"amount":     fmt.Sprintf("%.2f", amountUSD),
 		"gateway":    "checkout",
 		"currency":   "USD",
 		"return_url": returnURL,
+	}
+	if orderID != "" {
+		body["order_id"] = orderID
 	}
 	raw, _ := json.Marshal(body)
 

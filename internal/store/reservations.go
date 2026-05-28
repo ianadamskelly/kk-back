@@ -309,6 +309,30 @@ func (s *Store) FinalizeSuccessfulPayment(ctx context.Context, p *Payment) (newl
 	return newlyConfirmed, reviewed, tx.Commit(ctx)
 }
 
+// MarkSettledPaymentForReview records a provider-confirmed payment without
+// granting fulfilment when reconciliation is needed.
+func (s *Store) MarkSettledPaymentForReview(ctx context.Context, p *Payment) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if len(p.RawResponse) == 0 {
+		p.RawResponse = json.RawMessage("{}")
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE payments SET status = 'successful', provider_tx_id = $1, raw_response = $2, verified_at = $3
+		WHERE id = $4`, p.ProviderTxID, p.RawResponse, p.VerifiedAt, p.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE orders SET status = 'payment_review', auto_cancelled_at = NULL
+		WHERE id = $1`, p.OrderID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // ConfirmOrderManually confirms an offline-paid order, reacquiring an expired
 // checkout reservation only when the quoted coupon and credit are still free.
 func (s *Store) ConfirmOrderManually(ctx context.Context, orderID int64) (bool, error) {

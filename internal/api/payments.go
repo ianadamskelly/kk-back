@@ -185,7 +185,7 @@ func (a *API) initiateSifalo(w http.ResponseWriter, r *http.Request, order *stor
 	returnURL := a.cfg.PublicBaseURL +
 		"/payment/complete?gateway=sifalo&order_id=" + url.QueryEscape(txRef)
 
-	resp, err := a.sifaloInitiate(r.Context(), usd, returnURL)
+	resp, err := a.sifaloInitiate(r.Context(), usd, returnURL, txRef)
 	if err != nil {
 		payment.Status = "failed"
 		if resp != nil {
@@ -350,18 +350,26 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 	}
 
 	// Amount tolerance: payment.AmountCents is in USD cents for Sifalo.
+	// Sifalo Checkout appears to report the merchant net amount after fees in
+	// some verify/dashboard paths, while the customer authorises the gross
+	// amount. Accept a small fee-shaped shortfall, but send larger gaps to
+	// payment_review instead of granting access automatically.
 	gotUSD, _ := strconv.ParseFloat(resp.Amount, 64)
 	gotCents := int64(math.Round(gotUSD * 100))
 	expectedCents := payment.AmountCents
 
-	switch strings.ToLower(resp.Status) {
-	case "success":
-		if gotCents+1 < expectedCents { // allow 1-cent rounding slack
-			payment.Status = "failed"
+	switch {
+	case sifaloVerifySuccess(resp):
+		if !sifaloAmountCloseEnough(gotCents, expectedCents) {
+			now := time.Now().UTC()
+			payment.Status = "successful"
+			payment.ProviderTxID = resp.SID
+			payment.VerifiedAt = &now
 			payment.RawResponse = resp.Raw
-			_ = a.store.UpdatePayment(r.Context(), payment)
-			_ = a.store.ReleaseReservation(r.Context(), payment.OrderID)
-			return fmt.Errorf("sifalo amount mismatch: got %s expected %.2f", resp.Amount, float64(expectedCents)/100)
+			if err := a.store.MarkSettledPaymentForReview(r.Context(), payment); err != nil {
+				return err
+			}
+			return fmt.Errorf("sifalo amount requires review: got %s expected %.2f", resp.Amount, float64(expectedCents)/100)
 		}
 		now := time.Now().UTC()
 		payment.Status = "successful"
@@ -376,7 +384,7 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 			a.applyEntitlements(r, payment.OrderID)
 			a.autoFulfilDigitalOrder(r.Context(), payment.OrderID)
 		}
-	case "failure":
+	case sifaloVerifyFailure(resp):
 		payment.Status = "failed"
 		payment.RawResponse = resp.Raw
 		_ = a.store.UpdatePayment(r.Context(), payment)
@@ -386,6 +394,40 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 		_ = a.store.UpdatePayment(r.Context(), payment)
 	}
 	return nil
+}
+
+func sifaloVerifySuccess(resp *sifaloVerifyResp) bool {
+	status := strings.ToLower(resp.Status)
+	return status == "success" || status == "approved" || status == "executed" || resp.Code == 601
+}
+
+func sifaloVerifyFailure(resp *sifaloVerifyResp) bool {
+	status := strings.ToLower(resp.Status)
+	return status == "failure" || status == "failed" || status == "cancelled" || resp.Code == 600 || resp.Code == 604
+}
+
+func sifaloAmountCloseEnough(gotCents, expectedCents int64) bool {
+	if expectedCents <= 0 {
+		return gotCents >= expectedCents
+	}
+	if gotCents <= 0 {
+		return false
+	}
+	if gotCents >= expectedCents {
+		return true
+	}
+	return expectedCents-gotCents <= sifaloAllowedNetShortfallCents(expectedCents)
+}
+
+func sifaloAllowedNetShortfallCents(expectedCents int64) int64 {
+	const floorCents int64 = 5
+	const basisPoints int64 = 300 // 3%
+
+	shortfall := (expectedCents*basisPoints + 9999) / 10000
+	if shortfall < floorCents {
+		return floorCents
+	}
+	return shortfall
 }
 
 // applyEntitlements handles best-effort side effects after a freshly-confirmed
