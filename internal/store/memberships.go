@@ -49,7 +49,7 @@ func extendMembershipTx(ctx context.Context, q membershipExecutor, userID int64,
 	var row Membership
 	err := q.QueryRow(ctx, `
 		INSERT INTO memberships (user_id, plan, status, started_at, current_period_end)
-		VALUES ($1, $3, 'active', now(), now() + ($2 || ' seconds')::interval)
+		VALUES ($1, $3, 'active', now(), now() + make_interval(secs => $2::double precision))
 		ON CONFLICT (user_id) DO UPDATE SET
 			plan = CASE
 				WHEN memberships.status = 'active'
@@ -60,7 +60,7 @@ func extendMembershipTx(ctx context.Context, q membershipExecutor, userID int64,
 			END,
 			status = 'active',
 			current_period_end = GREATEST(memberships.current_period_end, now())
-				+ ($2 || ' seconds')::interval,
+				+ make_interval(secs => $2::double precision),
 			cancelled_at = NULL,
 			updated_at = now()
 		RETURNING `+stripSelectPrefix(membershipSelect),
