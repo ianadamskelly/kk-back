@@ -38,6 +38,12 @@ func (s *Store) GetLibraryResource(ctx context.Context, id int64) (*LibraryResou
 	return queryOne[LibraryResource](ctx, s.pool, librarySelect+` WHERE id = $1`, id)
 }
 
+// GetLibraryResourceBySlug returns one published resource by slug for the
+// public detail page.
+func (s *Store) GetLibraryResourceBySlug(ctx context.Context, slug string) (*LibraryResource, error) {
+	return queryOne[LibraryResource](ctx, s.pool, librarySelect+` WHERE slug = $1 AND status = 'published'`, slug)
+}
+
 // CreateLibraryResource inserts a resource, generating a unique slug.
 func (s *Store) CreateLibraryResource(ctx context.Context, r *LibraryResource) error {
 	base := r.Slug

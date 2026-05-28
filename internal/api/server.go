@@ -65,6 +65,7 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		r.Get("/courses/{slug}", a.getPublicCourse)
 		r.Get("/courses/{slug}/reviews", a.listPublicCourseReviews)
 		r.Get("/library", a.listPublicLibrary)
+		r.Get("/library/{slug}", a.getPublicLibraryResource)
 
 		r.Post("/contact", a.createSubmission)
 		r.Post("/newsletter", a.subscribeNewsletter)

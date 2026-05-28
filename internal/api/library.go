@@ -59,6 +59,32 @@ func (a *API) listPublicLibrary(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (a *API) getPublicLibraryResource(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetLibraryResourceBySlug(r.Context(), chi.URLParam(r, "slug"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "resource not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	entitled := a.libraryEntitled(r)
+	if !entitled {
+		item.URL = ""
+	} else {
+		uid := int64(0)
+		if claims := a.optionalClaims(r); claims != nil {
+			uid = parseClaimsUserID(claims)
+		}
+		item.URL = a.signedFileURL(uid, item.URL)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"entitled": entitled,
+		"resource": item,
+	})
+}
+
 // libraryEntitled tells whether the requester may see the unlocked
 // library. Admins always do; logged-in users do if they hold an active
 // membership.
