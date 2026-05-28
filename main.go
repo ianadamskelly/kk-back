@@ -70,6 +70,11 @@ func runBackgroundMaintenance(ctx context.Context, st *store.Store) {
 		if cancelled > 0 || reviewed > 0 {
 			log.Printf("stale order cleanup: auto-cancelled=%d payment-review=%d", cancelled, reviewed)
 		}
+		if n, err := st.ExpireOverdueMemberships(ctx); err != nil {
+			log.Printf("membership expiry failed: %v", err)
+		} else if n > 0 {
+			log.Printf("expired %d overdue membership(s)", n)
+		}
 	}
 
 	run()

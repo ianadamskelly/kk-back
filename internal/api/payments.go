@@ -236,7 +236,7 @@ func (a *API) verifyPayment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if payment.Status == "successful" {
-		writeJSON(w, http.StatusOK, payment)
+		a.writePaymentVerification(w, r, payment)
 		return
 	}
 
@@ -252,7 +252,21 @@ func (a *API) verifyPayment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, payment)
+	a.writePaymentVerification(w, r, payment)
+}
+
+func (a *API) writePaymentVerification(w http.ResponseWriter, r *http.Request, payment *store.Payment) {
+	type response struct {
+		*store.Payment
+		OrderKind      string `json:"orderKind"`
+		MembershipPlan string `json:"membershipPlan"`
+	}
+	out := response{Payment: payment}
+	if order, err := a.store.GetOrder(r.Context(), payment.OrderID); err == nil && order != nil {
+		out.OrderKind = order.Kind
+		out.MembershipPlan = order.MembershipPlan
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // flutterwaveWebhook is hit by Flutterwave when a transaction completes.
@@ -374,24 +388,17 @@ func (a *API) applySifaloVerify(r *http.Request, payment *store.Payment, sid str
 	return nil
 }
 
-// applyEntitlements grants whatever access a freshly-confirmed order earns:
-// for membership orders, extend the user's membership by 30 days. Course
-// orders need no extra work — entitlement is implicit via the order_item.
-// We also kick off the referral-reward check here so the referrer gets
-// store credit on the referee's first paid order.
+// applyEntitlements handles best-effort side effects after a freshly-confirmed
+// order. Membership access itself is granted atomically inside the store
+// confirmation transaction; course entitlement is implicit via the order_item.
+// We also kick off the referral-reward check here so the referrer gets store
+// credit on the referee's first paid order.
 // Best-effort: errors here are swallowed so a transient failure doesn't undo
 // a payment that has already been marked successful.
 func (a *API) applyEntitlements(r *http.Request, orderID int64) {
 	order, err := a.store.GetOrder(r.Context(), orderID)
 	if err != nil || order == nil {
 		return
-	}
-	if order.Kind == "membership" && order.UserID != nil {
-		plan := order.MembershipPlan
-		if plan == "" {
-			plan = "full"
-		}
-		_, _ = a.store.ExtendMembership(r.Context(), *order.UserID, 30*24*time.Hour, plan)
 	}
 	a.maybeGrantReferralReward(r, order)
 	a.tagSubscriberFromOrder(r, order)

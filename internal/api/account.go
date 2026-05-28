@@ -118,6 +118,10 @@ func (a *API) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	ctx := r.Context()
+	if _, err := a.store.ExpireOverdueMemberships(ctx); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	orders, _ := a.store.ListUserOrders(ctx, uid, false)
 	tickets, _ := a.store.ListUserTickets(ctx, uid)
@@ -127,6 +131,8 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 	// Membership status.
 	status := "guest"
 	active := false
+	hasCourseAccess := false
+	hasLibraryAccess := false
 	var periodEnd *time.Time
 	membershipPlan := ""
 	if m, err := a.store.GetMembership(ctx, uid); err == nil && m != nil {
@@ -135,6 +141,8 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 		if m.Status == "active" && m.CurrentPeriodEnd.After(time.Now().UTC()) {
 			status = "member"
 			active = true
+			hasLibraryAccess = true
+			hasCourseAccess = m.Plan == "full"
 		} else {
 			status = "expired"
 		}
@@ -192,6 +200,8 @@ func (a *API) getMyDashboard(w http.ResponseWriter, r *http.Request) {
 			"membershipStatus": status,
 			"membershipActive": active,
 			"membershipPlan":   membershipPlan,
+			"hasCourseAccess":  hasCourseAccess,
+			"hasLibraryAccess": hasLibraryAccess,
 			"periodEnd":        periodEnd,
 		},
 		"continueLearning": pickContinueLearning(courses),

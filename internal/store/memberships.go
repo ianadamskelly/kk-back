@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Membership is one row per user with a current_period_end. A user is
@@ -33,10 +35,19 @@ func (s *Store) GetMembership(ctx context.Context, userID int64) (*Membership, e
 // forward by `duration` from max(now, current_period_end). Called from the
 // payment-verify flow after a successful membership payment.
 func (s *Store) ExtendMembership(ctx context.Context, userID int64, duration time.Duration, plan string) (*Membership, error) {
+	return extendMembershipTx(ctx, s.pool, userID, duration, plan)
+}
+
+type membershipExecutor interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func extendMembershipTx(ctx context.Context, q membershipExecutor, userID int64, duration time.Duration, plan string) (*Membership, error) {
 	if plan != "library" {
 		plan = "full"
 	}
-	row, err := queryOne[Membership](ctx, s.pool, `
+	var row Membership
+	err := q.QueryRow(ctx, `
 		INSERT INTO memberships (user_id, plan, status, started_at, current_period_end)
 		VALUES ($1, $3, 'active', now(), now() + ($2 || ' seconds')::interval)
 		ON CONFLICT (user_id) DO UPDATE SET
@@ -54,8 +65,14 @@ func (s *Store) ExtendMembership(ctx context.Context, userID int64, duration tim
 			updated_at = now()
 		RETURNING `+stripSelectPrefix(membershipSelect),
 		userID, int64(duration.Seconds()), plan,
+	).Scan(
+		&row.ID, &row.UserID, &row.Plan, &row.Status, &row.StartedAt,
+		&row.CurrentPeriodEnd, &row.CancelledAt, &row.CreatedAt, &row.UpdatedAt,
 	)
-	return row, err
+	if err != nil {
+		return nil, err
+	}
+	return &row, nil
 }
 
 // CancelMembership marks the membership as cancelled but keeps the
@@ -71,6 +88,20 @@ func (s *Store) CancelMembership(ctx context.Context, userID int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// ExpireOverdueMemberships marks active memberships whose paid period has
+// ended as expired. Access checks also compare current_period_end to now(),
+// but persisting the status keeps the customer portal and admin list honest.
+func (s *Store) ExpireOverdueMemberships(ctx context.Context) (int64, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE memberships
+		SET status = 'expired', updated_at = now()
+		WHERE status = 'active' AND current_period_end <= now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 // MembershipListItem augments a membership row with the user's name/email

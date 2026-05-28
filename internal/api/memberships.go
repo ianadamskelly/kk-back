@@ -76,6 +76,10 @@ func (a *API) membershipKESCents(priceUSD float64) int64 {
 // the join-now CTA.
 func (a *API) getMyMembership(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
+	if _, err := a.store.ExpireOverdueMemberships(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	m, err := a.store.GetMembership(r.Context(), uid)
 	if errors.Is(err, store.ErrNotFound) {
 		plan, _ := a.membershipPlan("full")

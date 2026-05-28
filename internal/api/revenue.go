@@ -22,6 +22,10 @@ func (a *API) adminRevenueSummary(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listAdminMemberships(w http.ResponseWriter, r *http.Request) {
+	if _, err := a.store.ExpireOverdueMemberships(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	items, err := a.store.ListMemberships(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

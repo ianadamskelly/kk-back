@@ -365,6 +365,18 @@ func confirmOrderTx(ctx context.Context, tx pgx.Tx, orderID int64, allowReacquir
 	if _, err := tx.Exec(ctx, `UPDATE orders SET status = 'confirmed', auto_cancelled_at = NULL WHERE id = $1`, orderID); err != nil {
 		return false, false, err
 	}
+	if o.Kind == "membership" {
+		if o.UserID == nil {
+			return false, false, fmt.Errorf("membership order %d has no user", orderID)
+		}
+		plan := o.MembershipPlan
+		if plan == "" {
+			plan = "full"
+		}
+		if _, err := extendMembershipTx(ctx, tx, *o.UserID, 30*24*time.Hour, plan); err != nil {
+			return false, false, err
+		}
+	}
 	return true, false, nil
 }
 
