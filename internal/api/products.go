@@ -11,17 +11,18 @@ import (
 )
 
 type productInput struct {
-	Name         string `json:"name"`
-	Slug         string `json:"slug"`
-	Description  string `json:"description"`
-	Body         string `json:"body"`
-	PriceCents   int64  `json:"priceCents"`
-	Image        string `json:"image"`
-	Category     string `json:"category"`
-	Status       string `json:"status"`
-	SortOrder    int    `json:"sortOrder"`
-	Kind         string `json:"kind"`
-	MaxDownloads *int   `json:"maxDownloads"`
+	Name                 string `json:"name"`
+	Slug                 string `json:"slug"`
+	Description          string `json:"description"`
+	Body                 string `json:"body"`
+	PriceCents           int64  `json:"priceCents"`
+	Image                string `json:"image"`
+	Category             string `json:"category"`
+	Status               string `json:"status"`
+	SortOrder            int    `json:"sortOrder"`
+	Kind                 string `json:"kind"`
+	MaxDownloads         *int   `json:"maxDownloads"`
+	InteractiveAssetSlug string `json:"interactiveAssetSlug"`
 }
 
 func (a *API) listPublicProducts(w http.ResponseWriter, r *http.Request) {
@@ -106,6 +107,7 @@ func (a *API) createProduct(w http.ResponseWriter, r *http.Request) {
 		PriceCents:  in.PriceCents, Image: in.Image, Category: in.Category,
 		Status: in.Status, SortOrder: in.SortOrder,
 		Kind: kind, MaxDownloads: in.MaxDownloads,
+		InteractiveAssetSlug: in.InteractiveAssetSlug,
 	}
 	if err := a.store.CreateProduct(r.Context(), item); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -148,6 +150,7 @@ func (a *API) updateProduct(w http.ResponseWriter, r *http.Request) {
 		existing.Kind = "physical"
 	}
 	existing.MaxDownloads = in.MaxDownloads
+	existing.InteractiveAssetSlug = in.InteractiveAssetSlug
 	if err := a.store.UpdateProduct(r.Context(), existing); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

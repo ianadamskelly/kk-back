@@ -22,6 +22,10 @@ var ErrDuplicate = errors.New("duplicate")
 // per-download max_downloads cap on a digital product purchase.
 var ErrDownloadLimit = errors.New("download limit reached")
 
+// ErrAssetUseLimit is returned when an interactive asset has no
+// remaining metered uses.
+var ErrAssetUseLimit = errors.New("asset use limit reached")
+
 // Store wraps the PostgreSQL connection pool.
 type Store struct {
 	pool *pgxpool.Pool

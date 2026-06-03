@@ -134,6 +134,9 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// Owned content.
 			r.Get("/account/courses", a.listMyCourses)
 			r.Get("/account/downloads", a.listMyDownloads)
+			r.Get("/account/assets", a.listMyInteractiveAssets)
+			r.Get("/account/assets/{assetId}", a.getMyInteractiveAsset)
+			r.Post("/account/assets/{assetId}/export", a.exportMyInteractiveAsset)
 
 			// Customer testimonials.
 			r.Get("/account/testimonials", a.listMyTestimonials)

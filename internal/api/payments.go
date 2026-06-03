@@ -444,6 +444,7 @@ func (a *API) applyEntitlements(r *http.Request, orderID int64) {
 	}
 	a.maybeGrantReferralReward(r, order)
 	a.tagSubscriberFromOrder(r, order)
+	_ = a.store.GrantInteractiveAssetsForOrder(r.Context(), order)
 }
 
 // tagSubscriberFromOrder ensures the order's customer is on the mailing

@@ -206,6 +206,7 @@ func (a *API) updateOrder(w http.ResponseWriter, r *http.Request) {
 	// digital items.
 	if in.Status == "fulfilled" && existing.Status != "fulfilled" {
 		if order, err := a.store.GetOrder(r.Context(), id); err == nil && order != nil {
+			_ = a.store.GrantInteractiveAssetsForOrder(r.Context(), order)
 			a.sendOrderFulfilledEmailAsync(r.Context(), order)
 		}
 	}

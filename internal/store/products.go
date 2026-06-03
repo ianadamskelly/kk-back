@@ -18,21 +18,22 @@ import (
 // Kind is 'physical' (default; ships) or 'digital' (downloadable files
 // attached via product_downloads). MaxDownloads is nil for unlimited.
 type Product struct {
-	ID            int64          `json:"id" db:"id"`
-	Slug          string         `json:"slug" db:"slug"`
-	Name          string         `json:"name" db:"name"`
-	Description   string         `json:"description" db:"description"`
-	Body          string         `json:"body" db:"body"`
-	PriceCents    int64          `json:"priceCents" db:"price_cents"`
-	Image         string         `json:"image" db:"image"`
-	Category      string         `json:"category" db:"category"`
-	Status        string         `json:"status" db:"status"`
-	SortOrder     int            `json:"sortOrder" db:"sort_order"`
-	Kind          string         `json:"kind" db:"kind"`
-	MaxDownloads  *int           `json:"maxDownloads" db:"max_downloads"`
-	CreatedAt     time.Time      `json:"createdAt" db:"created_at"`
-	UpdatedAt     time.Time      `json:"updatedAt" db:"updated_at"`
-	Images        []ProductImage `json:"images" db:"-"`
+	ID                   int64          `json:"id" db:"id"`
+	Slug                 string         `json:"slug" db:"slug"`
+	Name                 string         `json:"name" db:"name"`
+	Description          string         `json:"description" db:"description"`
+	Body                 string         `json:"body" db:"body"`
+	PriceCents           int64          `json:"priceCents" db:"price_cents"`
+	Image                string         `json:"image" db:"image"`
+	Category             string         `json:"category" db:"category"`
+	Status               string         `json:"status" db:"status"`
+	SortOrder            int            `json:"sortOrder" db:"sort_order"`
+	Kind                 string         `json:"kind" db:"kind"`
+	MaxDownloads         *int           `json:"maxDownloads" db:"max_downloads"`
+	InteractiveAssetSlug string         `json:"interactiveAssetSlug" db:"interactive_asset_slug"`
+	CreatedAt            time.Time      `json:"createdAt" db:"created_at"`
+	UpdatedAt            time.Time      `json:"updatedAt" db:"updated_at"`
+	Images               []ProductImage `json:"images" db:"-"`
 }
 
 // ProductDownload is one downloadable file attached to a digital
@@ -71,7 +72,7 @@ type ProductFilter struct {
 	PublishedOnly bool
 }
 
-const productSelect = `SELECT id, slug, name, description, body, price_cents, image, category, status, sort_order, kind, max_downloads, created_at, updated_at FROM products`
+const productSelect = `SELECT id, slug, name, description, body, price_cents, image, category, status, sort_order, kind, max_downloads, interactive_asset_slug, created_at, updated_at FROM products`
 
 // ListProducts returns products matching the filter, ordered for display.
 func (s *Store) ListProducts(ctx context.Context, f ProductFilter) ([]Product, error) {
@@ -129,10 +130,11 @@ func (s *Store) CreateProduct(ctx context.Context, p *Product) error {
 		p.Kind = "physical"
 	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO products (slug, name, description, body, price_cents, image, category, status, sort_order, kind, max_downloads)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO products (slug, name, description, body, price_cents, image, category, status, sort_order, kind, max_downloads, interactive_asset_slug)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at`,
 		p.Slug, p.Name, p.Description, p.Body, p.PriceCents, p.Image, p.Category, p.Status, p.SortOrder, p.Kind, p.MaxDownloads,
+		p.InteractiveAssetSlug,
 	).Scan(&p.ID, &p.CreatedAt, &p.UpdatedAt)
 }
 
@@ -156,10 +158,11 @@ func (s *Store) UpdateProduct(ctx context.Context, p *Product) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE products
 		SET slug=$1, name=$2, description=$3, body=$4, price_cents=$5, image=$6,
-		    category=$7, status=$8, sort_order=$9, kind=$10, max_downloads=$11, updated_at=now()
-		WHERE id=$12`,
+		    category=$7, status=$8, sort_order=$9, kind=$10, max_downloads=$11,
+		    interactive_asset_slug=$12, updated_at=now()
+		WHERE id=$13`,
 		p.Slug, p.Name, p.Description, p.Body, p.PriceCents, p.Image,
-		p.Category, p.Status, p.SortOrder, p.Kind, p.MaxDownloads, p.ID)
+		p.Category, p.Status, p.SortOrder, p.Kind, p.MaxDownloads, p.InteractiveAssetSlug, p.ID)
 	if err != nil {
 		return err
 	}
