@@ -11,6 +11,7 @@ import (
 )
 
 const BrandClarityWorksheetSlug = "brand-clarity-worksheet"
+const IdealCustomerProfileTemplateSlug = "ideal-customer-profile-template"
 const defaultInteractiveAssetUses = 5
 
 type InteractiveAssetEntitlement struct {
@@ -41,8 +42,19 @@ func interactiveAssetName(slug string) string {
 	switch slug {
 	case BrandClarityWorksheetSlug:
 		return "Brand Clarity Worksheet"
+	case IdealCustomerProfileTemplateSlug:
+		return "Ideal Customer Profile Template"
 	default:
 		return slug
+	}
+}
+
+func IsKnownInteractiveAsset(slug string) bool {
+	switch slug {
+	case BrandClarityWorksheetSlug, IdealCustomerProfileTemplateSlug:
+		return true
+	default:
+		return false
 	}
 }
 

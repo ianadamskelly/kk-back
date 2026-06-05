@@ -49,7 +49,7 @@ func (a *API) listMyInteractiveAssets(w http.ResponseWriter, r *http.Request) {
 func (a *API) getMyInteractiveAsset(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	assetSlug := chi.URLParam(r, "assetId")
-	if assetSlug != store.BrandClarityWorksheetSlug {
+	if !store.IsKnownInteractiveAsset(assetSlug) {
 		writeError(w, http.StatusNotFound, "asset not found")
 		return
 	}
@@ -87,7 +87,7 @@ func (a *API) getMyInteractiveAsset(w http.ResponseWriter, r *http.Request) {
 func (a *API) exportMyInteractiveAsset(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	assetSlug := chi.URLParam(r, "assetId")
-	if assetSlug != store.BrandClarityWorksheetSlug {
+	if !store.IsKnownInteractiveAsset(assetSlug) {
 		writeError(w, http.StatusNotFound, "asset not found")
 		return
 	}
