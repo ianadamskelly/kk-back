@@ -108,6 +108,22 @@ func (a *API) listAdminCourseSubmissions(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, items)
 }
 
+// listAllAdminSubmissions powers the global grading inbox — every
+// student submission across all courses, newest first. The client
+// filters by course + grade.
+func (a *API) listAllAdminSubmissions(w http.ResponseWriter, r *http.Request) {
+	items, err := a.store.AdminListAllSubmissions(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	adminID := currentUserID(r)
+	for i := range items {
+		items[i].FileURL = a.signedFileURL(adminID, items[i].FileURL)
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
 func (a *API) gradeSubmission(w http.ResponseWriter, r *http.Request) {
 	submissionID := parseID(chi.URLParam(r, "submissionId"))
 	graderID := currentUserID(r)

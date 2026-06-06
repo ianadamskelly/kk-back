@@ -171,6 +171,41 @@ func (s *Store) AdminListSubmissionsForCourse(ctx context.Context, courseID int6
 	return out, rows.Err()
 }
 
+// AdminListAllSubmissions returns every submission across all courses
+// with student + task + course context joined in. Powers the global
+// grading inbox; the client filters by course/grade. Same shape and
+// joins as AdminListSubmissionsForCourse, minus the course filter.
+func (s *Store) AdminListAllSubmissions(ctx context.Context) ([]AdminTaskSubmission, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT s.id, s.task_id, s.user_id, s.body, s.file_url, s.grade, s.feedback,
+		       s.submitted_at, s.graded_at, s.grader_id,
+		       u.name, u.email,
+		       c.title, c.id,
+		       t.prompt, t.module
+		FROM course_task_submissions s
+		JOIN course_tasks t ON t.id = s.task_id
+		JOIN courses      c ON c.id = t.course_id
+		JOIN users        u ON u.id = s.user_id
+		ORDER BY s.submitted_at DESC, s.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AdminTaskSubmission{}
+	for rows.Next() {
+		var a AdminTaskSubmission
+		if err := rows.Scan(&a.ID, &a.TaskID, &a.UserID, &a.Body, &a.FileURL, &a.Grade, &a.Feedback,
+			&a.SubmittedAt, &a.GradedAt, &a.GraderID,
+			&a.StudentName, &a.StudentEmail,
+			&a.CourseTitle, &a.CourseID,
+			&a.TaskPrompt, &a.TaskModule); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // CourseIDForTask returns the course id that owns the given task, or
 // ErrNotFound. Used by submitCourseTask to enforce enrollment.
 func (s *Store) CourseIDForTask(ctx context.Context, taskID int64) (int64, error) {

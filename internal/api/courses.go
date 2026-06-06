@@ -75,6 +75,11 @@ func (a *API) getPublicCourse(w http.ResponseWriter, r *http.Request) {
 				item.Lessons[i].Resources[j].URL = ""
 			}
 		}
+		// Keep module + required flag so the curriculum can show an
+		// "Assignment" marker, but don't leak the prompt to non-buyers.
+		for i := range item.Tasks {
+			item.Tasks[i].Prompt = ""
+		}
 	} else {
 		uid := int64(0)
 		if claims := a.optionalClaims(r); claims != nil {

@@ -30,6 +30,7 @@ type Course struct {
 	UpdatedAt     time.Time        `json:"updatedAt" db:"updated_at"`
 	Lessons       []Lesson         `json:"lessons" db:"-"`
 	Resources     []CourseResource `json:"resources" db:"-"` // course-wide (lesson_id IS NULL)
+	Tasks         []CourseTask     `json:"tasks" db:"-"`     // end-of-module tasks (for curriculum markers)
 }
 
 // CourseResource is either a link or an uploaded file attached to a
@@ -111,6 +112,13 @@ func (s *Store) GetCourseBySlug(ctx context.Context, slug string, publishedOnly 
 		return nil, err
 	}
 	if err := s.AttachCourseResources(ctx, course); err != nil {
+		return nil, err
+	}
+	// Tasks power the "Assignment" markers on the public curriculum.
+	// The handler strips the prompt for non-entitled viewers; only the
+	// module + required flag are needed to render the marker.
+	course.Tasks, err = s.ListCourseTasks(ctx, course.ID)
+	if err != nil {
 		return nil, err
 	}
 	return course, nil
