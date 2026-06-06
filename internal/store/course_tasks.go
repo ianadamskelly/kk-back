@@ -206,6 +206,27 @@ func (s *Store) AdminListAllSubmissions(ctx context.Context) ([]AdminTaskSubmiss
 	return out, rows.Err()
 }
 
+// UserCanAccessCourse reports whether the user may read or submit the
+// course's tasks. It mirrors the "owned courses" rule used elsewhere
+// (see account.userOwnedCourses): free courses (price 0) are open to
+// any signed-in user, while paid courses require a purchase or a full
+// active membership. HasUserEnrolledInCourse alone excludes free
+// courses, which silently blocked their students from tasks.
+func (s *Store) UserCanAccessCourse(ctx context.Context, userID, courseID int64) (bool, error) {
+	var price int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT price_cents FROM courses WHERE id = $1`, courseID).Scan(&price); err != nil {
+		if err == pgx.ErrNoRows {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if price == 0 {
+		return userID > 0, nil
+	}
+	return s.HasUserEnrolledInCourse(ctx, userID, courseID)
+}
+
 // CourseIDForTask returns the course id that owns the given task, or
 // ErrNotFound. Used by submitCourseTask to enforce enrollment.
 func (s *Store) CourseIDForTask(ctx context.Context, taskID int64) (int64, error) {
