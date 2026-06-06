@@ -40,6 +40,43 @@ func (s *Store) ListUserCertificates(ctx context.Context, userID int64) ([]Certi
 		userID)
 }
 
+// CertificateListItem is a certificate joined with its course's display
+// fields, so the account "My Certificates" view can render title + cover
+// without depending on the user's owned-courses list (which excludes
+// courses an admin issued a cert for manually).
+type CertificateListItem struct {
+	Certificate
+	CourseTitle string `json:"courseTitle"`
+	CourseSlug  string `json:"courseSlug"`
+	CourseCover string `json:"courseCover"`
+}
+
+// ListUserCertificatesDetailed is ListUserCertificates plus the course
+// title/slug/cover for each row.
+func (s *Store) ListUserCertificatesDetailed(ctx context.Context, userID int64) ([]CertificateListItem, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.id, c.code, c.user_id, c.course_id, c.issued_at,
+		       co.title, co.slug, co.cover_image
+		FROM certificates c
+		JOIN courses co ON co.id = c.course_id
+		WHERE c.user_id = $1
+		ORDER BY c.issued_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []CertificateListItem{}
+	for rows.Next() {
+		var it CertificateListItem
+		if err := rows.Scan(&it.ID, &it.Code, &it.UserID, &it.CourseID, &it.IssuedAt,
+			&it.CourseTitle, &it.CourseSlug, &it.CourseCover); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // IssueCertificate inserts a new row. Caller supplies the random
 // `code` — kept opaque so it's hard to guess one off-the-cuff.
 // Returns the existing row when (user, course) already has one
