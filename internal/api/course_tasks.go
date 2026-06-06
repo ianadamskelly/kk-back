@@ -176,13 +176,13 @@ func (a *API) listMyCourseTasks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	enrolled, err := a.store.HasUserEnrolledInCourse(r.Context(), uid, course.ID)
+	canAccess, err := a.store.UserCanAccessCourse(r.Context(), uid, course.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !enrolled {
-		writeError(w, http.StatusForbidden, "not enrolled in this course")
+	if !canAccess {
+		writeError(w, http.StatusForbidden, "you don't have access to this course")
 		return
 	}
 	tasks, err := a.store.ListCourseTasks(r.Context(), course.ID)
@@ -208,8 +208,9 @@ func (a *API) listMyCourseTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 // submitCourseTask creates or replaces the caller's response. The
-// caller must be enrolled in the course owning this task — without
-// that gate any signed-in user could post submissions to any task.
+// caller must have access to the course owning this task (free course,
+// purchase, or membership) — without that gate any signed-in user
+// could post submissions to any task.
 func (a *API) submitCourseTask(w http.ResponseWriter, r *http.Request) {
 	uid := currentUserID(r)
 	taskID := parseID(chi.URLParam(r, "taskId"))
@@ -229,13 +230,13 @@ func (a *API) submitCourseTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	enrolled, err := a.store.HasUserEnrolledInCourse(r.Context(), uid, courseID)
+	canAccess, err := a.store.UserCanAccessCourse(r.Context(), uid, courseID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if !enrolled {
-		writeError(w, http.StatusForbidden, "not enrolled in this course")
+	if !canAccess {
+		writeError(w, http.StatusForbidden, "you don't have access to this course")
 		return
 	}
 
