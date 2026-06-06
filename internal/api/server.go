@@ -32,6 +32,10 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 	// fat-finger passwords; register stays tight to slow signup abuse.
 	loginLimiter := newIPRateLimiter(20, 10)  // 20/min, burst 10
 	registerLimiter := newIPRateLimiter(5, 3) // 5/min, burst 3
+	// Public certificate verify/download — generous for genuine sharing
+	// but enough to make code enumeration pointless (codes are ~50-bit
+	// Crockford strings, so this is defence-in-depth).
+	certLimiter := newIPRateLimiter(30, 15) // 30/min, burst 15
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -97,8 +101,8 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 		// Certificate verify + download — the code is the only auth.
 		// Verify is a small JSON for the share-friendly page; download
 		// streams the PDF straight to the browser.
-		r.Get("/cert/{code}", a.getPublicCertificate)
-		r.Get("/cert/{code}/download", a.downloadCertificate)
+		r.With(rateLimit(certLimiter)).Get("/cert/{code}", a.getPublicCertificate)
+		r.With(rateLimit(certLimiter)).Get("/cert/{code}/download", a.downloadCertificate)
 
 		// --- Authentication ---
 		// Login + register are rate-limited per IP (see top of NewRouter).
@@ -151,6 +155,9 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			// submit / re-submit a response).
 			r.Get("/account/courses/{slug}/tasks", a.listMyCourseTasks)
 			r.Post("/account/tasks/{taskId}/submit", a.submitCourseTask)
+			// Mark a course finished — issues the completion certificate
+			// when eligible (access + any required tasks passed).
+			r.Post("/account/courses/{slug}/complete", a.completeCourse)
 			// Student file upload for task attachments. Same backend as
 			// the admin uploader (writes to ProtectedUploadDir, returns
 			// "/files/<name>"); separate route so customers don't need
