@@ -311,6 +311,10 @@ func NewRouter(cfg config.Config, st *store.Store) http.Handler {
 			r.With(a.requirePermission("courses.manage")).Put("/admin/courses/{id}/tasks/{taskId}", a.updateCourseTask)
 			r.With(a.requirePermission("courses.manage")).Delete("/admin/courses/{id}/tasks/{taskId}", a.deleteCourseTask)
 			r.With(a.requirePermission("courses.view")).Get("/admin/courses/{id}/submissions", a.listAdminCourseSubmissions)
+			// Global grading inbox: every course's submissions in one
+			// feed. Distinct path from the contact-message
+			// /admin/submissions above (which lists ContactSubmissions).
+			r.With(a.requirePermission("courses.view")).Get("/admin/course-submissions", a.listAllAdminSubmissions)
 			r.With(a.requirePermission("courses.manage")).Put("/admin/submissions/{submissionId}/grade", a.gradeSubmission)
 			// Manual cert issuance from the admin (e.g. for courses
 			// without required-pass tasks where there's no automatic
