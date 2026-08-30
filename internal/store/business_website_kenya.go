@@ -158,6 +158,7 @@ func (s *Store) seedBusinessWebsiteChecklistLibrary(ctx context.Context) error {
 			status = EXCLUDED.status,
 			sort_order = EXCLUDED.sort_order,
 			updated_at = now()`,
+		"business-website-planning-checklist-kenya",
 		"Business Website Planning Checklist for Kenyan Businesses",
 		"<p>A practical one-page checklist to use before planning, commissioning, or requesting a quotation for a business website in Kenya.</p><p>Review strategy, domain and hosting, structure, content, SEO, mobile performance, security, conversion, and maintenance before the project begins.</p>",
 		"/downloads/business-website-planning-checklist-kenya.pdf",
