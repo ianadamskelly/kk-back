@@ -45,7 +45,10 @@ func (s *Store) Seed(ctx context.Context, adminEmail, adminPassword string) erro
 	if err := s.seedLearn(ctx); err != nil {
 		return err
 	}
-	return s.seedLibrary(ctx)
+	if err := s.seedLibrary(ctx); err != nil {
+		return err
+	}
+	return s.seedBusinessWebsiteChecklistLibrary(ctx)
 }
 
 func (s *Store) seedLearn(ctx context.Context) error {

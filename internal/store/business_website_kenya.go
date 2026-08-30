@@ -100,7 +100,7 @@ const businessWebsiteKenyaContent = `
 <p>Do not begin by asking, “Which template should we use?” Start by asking, <strong>“What does the business need this website to accomplish?”</strong></p>
 <p>Your website should make the business easier to understand, easier to trust, easier to find, and easier to contact.</p>
 <p><img src="/images/blog/business-website-kenya/cta-visual.png" alt="Business website call to action visual with an orange action button and upward arrow" loading="lazy"></p>
-<p><a href="/downloads/business-website-planning-checklist-kenya.pdf">Download the Business Website Planning Checklist for Kenyan Businesses (PDF)</a></p>
+<p><a href="/library/business-website-planning-checklist-kenya">Open the Business Website Planning Checklist in the Resource Library</a></p>
 <p>If you are planning a new business website or replacing one that no longer represents where your company is going, Kuza Kizazi can help you define the right structure, sharpen the message, and build a website designed around your actual business goals.</p>
 `
 
@@ -140,6 +140,28 @@ func (s *Store) seedBusinessWebsiteGuide(ctx context.Context) error {
 		"/images/blog/business-website-kenya/featured-cover.png",
 		categoryID,
 		authorID,
+	)
+	return err
+}
+
+func (s *Store) seedBusinessWebsiteChecklistLibrary(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO library_resources (slug, title, description, type, category, url, image, status, sort_order)
+		VALUES ($1, $2, $3, 'Checklist', 'Websites & Digital Platforms', $4, $5, 'published', 7)
+		ON CONFLICT (slug) DO UPDATE SET
+			title = EXCLUDED.title,
+			description = EXCLUDED.description,
+			type = EXCLUDED.type,
+			category = EXCLUDED.category,
+			url = EXCLUDED.url,
+			image = EXCLUDED.image,
+			status = EXCLUDED.status,
+			sort_order = EXCLUDED.sort_order,
+			updated_at = now()`,
+		"Business Website Planning Checklist for Kenyan Businesses",
+		"<p>A practical one-page checklist to use before planning, commissioning, or requesting a quotation for a business website in Kenya.</p><p>Review strategy, domain and hosting, structure, content, SEO, mobile performance, security, conversion, and maintenance before the project begins.</p>",
+		"/downloads/business-website-planning-checklist-kenya.pdf",
+		"/images/blog/business-website-kenya/featured-cover.png",
 	)
 	return err
 }
