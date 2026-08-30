@@ -36,6 +36,9 @@ func (s *Store) Seed(ctx context.Context, adminEmail, adminPassword string) erro
 	if err := s.seedBlog(ctx); err != nil {
 		return err
 	}
+	if err := s.seedBusinessWebsiteGuide(ctx); err != nil {
+		return err
+	}
 	if err := s.seedShop(ctx); err != nil {
 		return err
 	}
