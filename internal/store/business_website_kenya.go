@@ -100,6 +100,7 @@ const businessWebsiteKenyaContent = `
 <p>Do not begin by asking, “Which template should we use?” Start by asking, <strong>“What does the business need this website to accomplish?”</strong></p>
 <p>Your website should make the business easier to understand, easier to trust, easier to find, and easier to contact.</p>
 <p><img src="/images/blog/business-website-kenya/cta-visual.png" alt="Business website call to action visual with an orange action button and upward arrow" loading="lazy"></p>
+<p><a href="/downloads/business-website-planning-checklist-kenya.pdf">Download the Business Website Planning Checklist for Kenyan Businesses (PDF)</a></p>
 <p>If you are planning a new business website or replacing one that no longer represents where your company is going, Kuza Kizazi can help you define the right structure, sharpen the message, and build a website designed around your actual business goals.</p>
 `
 
